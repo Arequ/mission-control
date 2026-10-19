@@ -75,7 +75,7 @@ func identityFrom(hostID string, details map[string]any) hostIdentity {
 	osv := asMap(details["os_version"])
 	info := asMap(details["osquery_info"])
 	plat := asMap(details["platform_info"])
-	id := hostIdentity{HostIdentifier: strings.TrimSpace(hostID)}
+	id := hostIdentity{HostIdentifier: strings.TrimSpace(strings.ReplaceAll(hostID, "\x00", ""))}
 	id.UUID = firstStr(sys["uuid"])
 	id.Serial = firstStr(sys["hardware_serial"])
 	id.Hostname = firstStr(sys["hostname"], sys["local_hostname"])
@@ -364,6 +364,8 @@ func (s *Store) OsqueryConfig(ctx context.Context, nodeKey string, interval time
 			"logger_tls_period":    10,
 			"distributed_interval": 10,
 			"config_refresh":       30,
+			// osquery defaults this to true, which never polls distributed read.
+			"disable_distributed": false,
 		},
 	}
 	return cfg, false, nil

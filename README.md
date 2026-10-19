@@ -58,7 +58,24 @@ Promotion to production happens after `soak_days` (7 in the example). To see it 
 
 Munki clients use `http://munki:mc_dev_repo_token@localhost:8080/repo` as the repo URL. Catalogs are at `/repo/catalogs/testing` and `/repo/catalogs/production`.
 
-osqueryd enrolls at the same host. The server speaks HTTP; put TLS in front, or point `--tls_server_certs` at a certificate you terminate locally. With the dev seed, the enroll secret file contains `mc_dev_enroll_secret`. A seeded fleet of about forty Macs is already in the UI. A host that enrolls for real shows up next to them. Packs and labels from Terraform are delivered on `POST /config`. Live queries from the UI are delivered on the distributed read/write endpoints.
+osqueryd enrolls at the same host. The server speaks HTTP; put TLS in front, or point `--tls_server_certs` at a certificate you terminate locally. osquery 5 ships with empty endpoint defaults, so set the historical paths explicitly:
+
+```bash
+osqueryd \
+  --tls_hostname=mc.example:443 \
+  --enroll_secret_path=/etc/osquery/enroll.secret \
+  --enroll_tls_endpoint=/enroll \
+  --config_plugin=tls --config_tls_endpoint=/config \
+  --logger_plugin=tls --logger_tls_endpoint=/logger \
+  --distributed_plugin=tls \
+  --disable_distributed=false \
+  --distributed_tls_read_endpoint=/distributed_read \
+  --distributed_tls_write_endpoint=/distributed_write
+```
+
+`--disable_distributed=false` is required. osquery leaves distributed queries off unless that flag is set at startup.
+
+With the dev seed, the enroll secret file contains `mc_dev_enroll_secret`. A seeded fleet of about forty Macs is already in the UI. A host that enrolls for real shows up next to them. Packs and labels from Terraform are delivered on `POST /config`. Live queries from the UI are delivered on the distributed read/write endpoints.
 
 `docker compose --profile runner up --build` also starts a fake runner on the compose network. It idles until a recipe and a job exist.
 

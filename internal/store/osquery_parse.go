@@ -16,7 +16,8 @@ func asString(v any) string {
 	case nil:
 		return ""
 	case string:
-		return t
+		// osquery sometimes emits NUL inside a column. Postgres rejects that byte.
+		return strings.ReplaceAll(t, "\x00", "")
 	case json.Number:
 		return t.String()
 	case bool:

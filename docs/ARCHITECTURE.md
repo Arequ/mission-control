@@ -96,7 +96,7 @@ The example manifest `testing` lists both the `testing` and `production` catalog
 
 ## Osquery
 
-osqueryd talks to the standard TLS remote API. The process itself speaks HTTP, the same way Munki does; TLS terminates at the ingress. The paths are the osquery defaults, so a host only needs `--tls_hostname`, `--enroll_secret_path`, `--config_plugin=tls`, `--logger_plugin=tls`, and `--distributed_plugin=tls`:
+osqueryd talks to the standard TLS remote API. The process itself speaks HTTP, the same way Munki does; TLS terminates at the ingress. The paths are the historical osquery defaults. osquery 5 compiles those endpoint flags as empty, so a host sets them explicitly along with `--tls_hostname`, `--enroll_secret_path`, `--config_plugin=tls`, `--logger_plugin=tls`, and `--distributed_plugin=tls`:
 
 - `POST /enroll`
 - `POST /config`
@@ -114,7 +114,7 @@ Built-in inventory queries are always on the schedule. Their names start with `m
 
 Dynamic labels are snapshot queries named `mc_label_<name>`. A non-empty result means the host is a member. Manual labels are serials or device ids. A pack is included when it is enabled and the host is in any of its labels. A pack with no labels applies to every host. Platform, shard, and discovery are passed through for osquery to filter. A pack interval overrides the query interval; otherwise each query keeps its own interval, snapshot, and differential settings. Queries with `scheduled` also go on the global schedule.
 
-Live queries are operational, not config. `POST /api/v1/live-queries` needs `osquery:write` and an explicit set of device ids or label names (at most 2000). Distributed read hands the SQL to those hosts and distributed write stores the rows. The UI polls. Targets that are still pending when `timeout_seconds` elapses become `timeout`.
+Live queries are operational, not config. `POST /api/v1/live-queries` needs `osquery:write` and an explicit set of device ids or label names (at most 2000). Distributed read hands the SQL to those hosts and distributed write stores the rows. The UI polls. Targets that are still pending when `timeout_seconds` elapses become `timeout`. osquery does not poll distributed read unless it was started with `--disable_distributed=false`. The config document also sets that option, but the runner is started before the first config arrives.
 
 Result logs are inserted in batches. `MC_ELASTIC_URL` optionally forwards the same rows to Elasticsearch `_bulk` (`MC_ELASTIC_INDEX`, `MC_ELASTIC_API_KEY`). Postgres stays the source of record. A forwarder error is logged and the agent still gets HTTP 200. An empty URL uses a no-op forwarder.
 
