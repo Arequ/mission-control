@@ -159,6 +159,7 @@ export type Device = {
   labels?: string[];
   apps?: DeviceApp[];
   events?: DeviceEvent[];
+  coverage?: { seen: number; total: number };
 };
 
 export type OsqueryQuery = {
@@ -192,6 +193,80 @@ export type OsqueryLabel = {
   description: string;
   kind: string;
   members?: number;
+};
+
+export type CoverageCell = {
+  source: string;
+  state: "seen" | "stale" | "missing" | string;
+  last_seen_at?: string;
+  native_id?: string;
+};
+
+export type CoverageRow = {
+  id: string;
+  kind: string;
+  name: string;
+  hostname: string;
+  serial: string;
+  user: string;
+  os_version: string;
+  seen: number;
+  total: number;
+  cells: CoverageCell[];
+};
+
+export type CoverageMatrix = {
+  sources: { key: string; name: string; short: string; percent: number; stale_after_seconds: number }[];
+  rows: CoverageRow[];
+  total: number;
+  gaps: number;
+  limit: number;
+  offset: number;
+};
+
+export type CoverageDevice = {
+  id: string;
+  kind: string;
+  name: string;
+  hostname: string;
+  serial: string;
+  user: string;
+  os_version: string;
+  model?: string;
+  device_id?: string;
+  match: { confidence: string; matched_on: string[]; note: string };
+  seen: number;
+  total: number;
+  sources: {
+    key: string;
+    name: string;
+    short: string;
+    state: string;
+    last_seen_at?: string;
+    native_id?: string;
+    confidence?: string;
+    matched_on?: string[];
+  }[];
+  fields: {
+    field: string;
+    label: string;
+    unified: string;
+    values: { source: string; value: string; disagrees: boolean }[];
+  }[];
+  events: { id: number; at: string; source: string; kind: string; detail: Record<string, unknown> }[];
+};
+
+export type SourceConnector = {
+  id: string;
+  name: string;
+  source: string;
+  mode: string;
+  enabled: boolean;
+  stale_after_seconds: number;
+  last_sync_at?: string;
+  last_sync_status: string;
+  last_sync_error: string;
+  last_sync_count: number;
 };
 
 export type LiveQuery = {
@@ -273,4 +348,16 @@ export const api = {
   runLive: (body: { sql: string; device_ids?: string[]; labels?: string[]; timeout_seconds: number }) =>
     request<LiveQuery>("/api/v1/live-queries", { method: "POST", body: JSON.stringify(body) }),
   liveQuery: (id: string) => request<LiveQuery>(`/api/v1/live-queries/${id}`),
+  coverageMatrix: (params: { filter?: string; source?: string; staleDays?: number; q?: string; limit?: number; offset?: number }) => {
+    const q = new URLSearchParams();
+    if (params.filter) q.set("filter", params.filter);
+    if (params.source) q.set("source", params.source);
+    if (params.staleDays) q.set("stale_days", String(params.staleDays));
+    if (params.q) q.set("q", params.q);
+    q.set("limit", String(params.limit ?? 100));
+    if (params.offset) q.set("offset", String(params.offset));
+    return request<CoverageMatrix>(`/api/v1/coverage/matrix?${q}`);
+  },
+  coverageDevice: (id: string) => request<CoverageDevice>(`/api/v1/coverage/devices/${id}`),
+  coverageConnectors: () => request<{ connectors: SourceConnector[] }>("/api/v1/coverage/connectors"),
 };

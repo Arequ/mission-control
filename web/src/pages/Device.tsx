@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from "react";
-import { NavLink, useLocation, useParams } from "react-router-dom";
+import { Link, NavLink, useLocation, useParams } from "react-router-dom";
 import { api, type Device, type DeviceEvent } from "../api";
 import { Icon } from "../icons";
 import { LiveQueryPanel } from "./LiveQuery";
@@ -37,6 +37,11 @@ export function DevicePage() {
                 <div className="hero-title">
                   <h1>{device.computer_name || device.hostname}</h1>
                   <StatusPill status={device.status} />
+                  {device.coverage ? (
+                    <Link className="coverage-chip" to={`/coverage/devices/${device.id}`}>
+                      Coverage {device.coverage.seen}/{device.coverage.total}
+                    </Link>
+                  ) : null}
                 </div>
                 <div className="sub">
                   {[device.username, device.model_name || device.hardware_model, device.cpu_brand, device.os_display || device.os_version]

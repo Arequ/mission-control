@@ -1,6 +1,6 @@
 BIN := bin
 
-.PHONY: build test ui tidy fmt server tf-dev compose
+.PHONY: build test test-race ui tidy fmt server tf-dev compose
 
 build:
 	mkdir -p $(BIN)
@@ -12,6 +12,10 @@ build:
 test:
 	go test ./...
 	cd terraform-provider-missioncontrol && go test ./...
+
+test-race:
+	go test -race ./...
+	cd terraform-provider-missioncontrol && go test -race ./...
 
 ui:
 	cd web && npm install && npm run build

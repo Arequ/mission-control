@@ -24,6 +24,27 @@ variable "enroll_secret" {
   default     = "example-enroll-secret"
 }
 
+variable "crowdstrike_client_secret" {
+  description = "CrowdStrike OAuth client secret. Placeholder for local applies, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-crowdstrike-client-secret"
+}
+
+variable "kolide_api_token" {
+  description = "Kolide API token. Placeholder for local applies, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-kolide-api-token"
+}
+
+variable "elastic_api_key" {
+  description = "Elasticsearch API key used by the event-log connectors. Placeholder, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-elastic-api-key"
+}
+
 variable "soak_days" {
   description = "Days a package stays in the testing catalog before promotion. Use 0 to promote on the next scheduler tick."
   type        = number
