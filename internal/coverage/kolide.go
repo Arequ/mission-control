@@ -5,15 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
 // Kolide polls the Kolide K2 device API.
-// GET {base}/api/v0/devices?per_page=100 with a bearer token, following
-// pagination.next until it is empty. Device fields that the public list
-// documents (id, name, serial, operating_system, last_seen_at) are always
-// read. hardware_uuid, primary_mac_address, remote_ip, and assigned_owner.email
-// are read when the payload includes them.
+// GET {base}/api/v0/devices?per_page=100 with a bearer token. Pages follow
+// pagination.next, then pagination.next_cursor when the server omits the URL.
+// Relative next links are resolved against the connector base URL.
 type Kolide struct{}
 
 func (Kolide) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observation, error) {
@@ -31,8 +30,14 @@ func (Kolide) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observat
 	if strings.HasSuffix(base, "/api/v0") {
 		next = base + "/devices?per_page=100"
 	}
+	seenURL := map[string]struct{}{}
+	seenID := map[string]struct{}{}
 	var out []Observation
 	for page := 0; page < 200 && next != ""; page++ {
+		if _, ok := seenURL[next]; ok {
+			break
+		}
+		seenURL[next] = struct{}{}
 		req, err := http.NewRequest(http.MethodGet, next, nil)
 		if err != nil {
 			return nil, err
@@ -61,7 +66,8 @@ func (Kolide) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observat
 				} `json:"assigned_owner"`
 			} `json:"data"`
 			Pagination struct {
-				Next string `json:"next"`
+				Next       string `json:"next"`
+				NextCursor string `json:"next_cursor"`
 			} `json:"pagination"`
 		}
 		if err := json.Unmarshal(raw, &body); err != nil {
@@ -72,6 +78,10 @@ func (Kolide) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observat
 			if id == "" || id == "null" {
 				continue
 			}
+			if _, ok := seenID[id]; ok {
+				continue
+			}
+			seenID[id] = struct{}{}
 			obs := Observation{
 				NativeID:  id,
 				OSVersion: d.OperatingSystem,
@@ -88,7 +98,31 @@ func (Kolide) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observat
 			obs.Fields = obs.NormalizedFields()
 			out = append(out, obs)
 		}
-		next = strings.TrimSpace(body.Pagination.Next)
+		next = kolideNext(base, body.Pagination.Next, body.Pagination.NextCursor)
 	}
 	return out, nil
+}
+
+func kolideNext(base, next, cursor string) string {
+	next = strings.TrimSpace(next)
+	cursor = strings.TrimSpace(cursor)
+	if next == "" && cursor != "" {
+		next = base + "/api/v0/devices?per_page=100&cursor=" + url.QueryEscape(cursor)
+	}
+	if next == "" {
+		return ""
+	}
+	u, err := url.Parse(next)
+	if err != nil {
+		return ""
+	}
+	if u.Host == "" {
+		baseURL, err := url.Parse(base)
+		if err != nil {
+			return ""
+		}
+		u.Scheme = baseURL.Scheme
+		u.Host = baseURL.Host
+	}
+	return u.String()
 }

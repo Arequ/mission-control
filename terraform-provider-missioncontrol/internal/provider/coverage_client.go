@@ -23,6 +23,7 @@ type connectorAPI struct {
 	Query             string            `json:"query"`
 	QueryLanguage     string            `json:"query_language"`
 	TimeField         string            `json:"time_field"`
+	TimeZone          string            `json:"time_zone"`
 	FieldMap          map[string]string `json:"field_map"`
 	ManagedBy         string            `json:"managed_by,omitempty"`
 }

@@ -31,7 +31,7 @@ func (r *sourceConnectorResource) Configure(_ context.Context, req resource.Conf
 
 func (r *sourceConnectorResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "A security-source connector. osquery and munki use mode native. CrowdStrike and Kolide use mode api. Rapid7, Netskope, Proofpoint, and BlastShield use mode elastic against an index the organization already ships. client_secret, api_token, and elastic_api_key are write-only: Terraform sends them and the API never returns them. An empty or omitted credential on update keeps the stored value. Import does not plan an update for those credentials, because state has no prior fingerprint to compare.",
+		Description: "A security-source connector. osquery and munki use mode native. CrowdStrike and Kolide use mode api. Rapid7, Netskope, Proofpoint, and BlastShield use mode elastic against an index the organization already ships. client_secret, api_token, and elastic_api_key are write-only: Terraform sends them and the API never returns them. An empty or omitted credential on update keeps the stored value. After import, a configured credential plans one apply that records credentials_fingerprint. Later rotations diff against that hash. Omitting the credential in configuration does not plan an update.",
 		Attributes: map[string]schema.Attribute{
 			"id":                      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":                    schema.StringAttribute{Required: true},
@@ -50,9 +50,10 @@ func (r *sourceConnectorResource) Schema(_ context.Context, _ resource.SchemaReq
 			"query":                   schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString(""), Description: "KQL or Elasticsearch DSL."},
 			"query_language":          schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("kql"), Description: "kql or dsl."},
 			"time_field":              schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("@timestamp")},
+			"time_zone":               schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("UTC"), Description: "IANA zone for time_field values that do not include an offset. Default UTC."},
 			"field_map":               schema.MapAttribute{ElementType: types.StringType, Optional: true, Computed: true, Default: mapdefault.StaticValue(types.MapValueMust(types.StringType, map[string]attr.Value{})), Description: "Event field path for each normalized key: native_id, serial, hardware_uuid, mac, hostname, primary_user, os_version, ip_address, agent_version, last_seen."},
 			"managed_by":              schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
-			"credentials_fingerprint": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "SHA-256 of the configured credentials. Null after import, so import does not plan a credential update."},
+			"credentials_fingerprint": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "SHA-256 of the configured write-only credentials. Null after import only when configuration also omits them. When configuration has a credential, the next plan records the hash so a later rotation is visible."},
 		},
 	}
 }
@@ -75,6 +76,7 @@ type sourceConnectorModel struct {
 	Query                  types.String `tfsdk:"query"`
 	QueryLanguage          types.String `tfsdk:"query_language"`
 	TimeField              types.String `tfsdk:"time_field"`
+	TimeZone               types.String `tfsdk:"time_zone"`
 	FieldMap               types.Map    `tfsdk:"field_map"`
 	ManagedBy              types.String `tfsdk:"managed_by"`
 	CredentialsFingerprint types.String `tfsdk:"credentials_fingerprint"`
@@ -95,6 +97,7 @@ func (m sourceConnectorModel) api(ctx context.Context, cfg sourceConnectorModel)
 		ElasticURL: m.ElasticURL.ValueString(), ElasticAPIKey: configuredSecret(cfg.ElasticAPIKey),
 		IndexPattern: m.IndexPattern.ValueString(), Query: m.Query.ValueString(),
 		QueryLanguage: m.QueryLanguage.ValueString(), TimeField: m.TimeField.ValueString(),
+		TimeZone: m.TimeZone.ValueString(),
 		FieldMap: fieldMap, ManagedBy: m.ManagedBy.ValueString(),
 	}
 	return api, diags
@@ -113,7 +116,8 @@ func modelConnector(ctx context.Context, in connectorAPI, fingerprint types.Stri
 		BaseURL: types.StringValue(in.BaseURL), ClientID: types.StringValue(in.ClientID),
 		ElasticURL: types.StringValue(in.ElasticURL), IndexPattern: types.StringValue(in.IndexPattern),
 		Query: types.StringValue(in.Query), QueryLanguage: types.StringValue(in.QueryLanguage),
-		TimeField: types.StringValue(in.TimeField), FieldMap: fieldMap, ManagedBy: types.StringValue(in.ManagedBy),
+		TimeField: types.StringValue(in.TimeField), TimeZone: types.StringValue(in.TimeZone),
+		FieldMap: fieldMap, ManagedBy: types.StringValue(in.ManagedBy),
 		CredentialsFingerprint: fingerprint,
 	}, diags
 }

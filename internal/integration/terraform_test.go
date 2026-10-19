@@ -216,8 +216,24 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if strings.Contains(string(connOut), "example-crowdstrike-client-secret") || strings.Contains(string(connOut), "example-enroll-secret") {
 		t.Fatalf("credential leaked in plan:\n%s", connOut)
 	}
-	if connErr != nil {
-		t.Fatalf("imported connector should not plan an update: %v\n%s", connErr, connOut)
+	if !errors.As(connErr, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(connOut), "credentials_fingerprint") {
+		t.Fatalf("imported connector should plan one fingerprint update, err=%v\n%s", connErr, connOut)
+	}
+	run("apply", "-auto-approve", "-input=false",
+		"-var", "endpoint="+ts.URL,
+		"-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4",
+		"-var", "soak_days=3",
+	)
+	recorded := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	recordedOut, recordedErr := recorded.CombinedOutput()
+	if strings.Contains(string(recordedOut), "example-crowdstrike-client-secret") {
+		t.Fatalf("credential leaked in plan:\n%s", recordedOut)
+	}
+	if recordedErr != nil {
+		t.Fatalf("fingerprint apply should leave a clean plan: %v\n%s", recordedErr, recordedOut)
 	}
 	var listedQ struct {
 		Queries []struct {
@@ -357,8 +373,24 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if strings.Contains(string(out), "example-enroll-secret") {
 		t.Fatalf("enroll secret leaked in plan:\n%s", out)
 	}
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "secret_fingerprint") {
+		t.Fatalf("imported enroll secret should plan one fingerprint update, err=%v\n%s", err, out)
+	}
+	run("apply", "-auto-approve", "-input=false",
+		"-var", "endpoint="+ts.URL,
+		"-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4",
+		"-var", "soak_days=3",
+	)
+	cleanSecret := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = cleanSecret.CombinedOutput()
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
 	if err != nil {
-		t.Fatalf("imported enroll secret should not plan an update, err=%v\n%s", err, out)
+		t.Fatalf("fingerprint apply should leave a clean plan, err=%v\n%s", err, out)
 	}
 	if strings.Contains(string(out), "example-crowdstrike-client-secret") || strings.Contains(string(out), "example-kolide-api-token") || strings.Contains(string(out), "example-elastic-api-key") {
 		t.Fatalf("connector credential leaked in plan:\n%s", out)
@@ -376,6 +408,25 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	}
 	if strings.Contains(string(driftOut), "example-enroll-secret") {
 		t.Fatalf("enroll secret leaked in plan:\n%s", driftOut)
+	}
+
+	stateRaw, err := os.ReadFile(filepath.Join(work, "terraform.tfstate"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "rotated-enroll-secret-value"} {
+		if strings.Contains(string(stateRaw), leak) {
+			t.Fatalf("terraform state contains %s", leak)
+		}
+	}
+	var audit string
+	if err := st.Pool().QueryRow(ctx, `SELECT coalesce(string_agg(detail::text, ''), '') FROM audit_log`).Scan(&audit); err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret"} {
+		if strings.Contains(audit, leak) {
+			t.Fatalf("audit log contains %s", leak)
+		}
 	}
 
 	run("destroy", "-auto-approve", "-input=false",

@@ -153,6 +153,10 @@ func TestKolideFake(t *testing.T) {
 func TestElasticMapping(t *testing.T) {
 	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/_pit") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		if r.URL.Path != "/logs-rapid7.insight-*/_search" {
 			t.Errorf("path %s", r.URL.Path)
 		}

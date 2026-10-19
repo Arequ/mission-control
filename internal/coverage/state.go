@@ -66,7 +66,8 @@ func Classify(present bool, lastSeen time.Time, now time.Time, staleAfter time.D
 	if staleAfter <= 0 {
 		staleAfter = 24 * time.Hour
 	}
-	if lastSeen.IsZero() || now.Sub(lastSeen) > staleAfter {
+	// At the threshold the snapshot is stale, matching the "stale over N days" filter.
+	if lastSeen.IsZero() || now.Sub(lastSeen) >= staleAfter {
 		return Stale
 	}
 	return Seen

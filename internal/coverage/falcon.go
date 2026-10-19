@@ -3,18 +3,35 @@ package coverage
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Falcon polls the CrowdStrike Falcon hosts API with OAuth2 client credentials.
 // List: GET /devices/queries/devices-scroll/v1
 // Details: POST /devices/entities/devices/v2 {"ids": [...]}
+// The base URL is the cloud region (api.crowdstrike.com, api.us-2, api.eu-1, ...).
+// Tokens are cached until shortly before expires_in and refreshed once on 401.
 type Falcon struct{}
+
+const falconMaxPages = 20
+
+type falconTokenEntry struct {
+	token string
+	until time.Time
+}
+
+var (
+	falconTokens sync.Mutex
+	falconCache  = map[string]falconTokenEntry{}
+)
 
 func (Falcon) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observation, error) {
 	if hc == nil {
@@ -27,30 +44,58 @@ func (Falcon) Poll(ctx context.Context, cfg Config, hc *http.Client) ([]Observat
 	if cfg.ClientID == "" || cfg.ClientSecret == "" {
 		return nil, fmt.Errorf("falcon oauth: client id and client secret are required")
 	}
-	token, err := falconToken(ctx, hc, base, cfg.ClientID, cfg.ClientSecret)
+	token, err := falconToken(ctx, hc, base, cfg.ClientID, cfg.ClientSecret, false)
 	if err != nil {
 		return nil, err
 	}
-	ids, err := falconIDs(ctx, hc, base, token)
+	ids, refreshed, err := falconIDs(ctx, hc, base, cfg.ClientID, cfg.ClientSecret, token)
 	if err != nil {
 		return nil, err
+	}
+	if refreshed != "" {
+		token = refreshed
 	}
 	var out []Observation
+	seen := map[string]bool{}
 	for i := 0; i < len(ids); i += 100 {
 		end := i + 100
 		if end > len(ids) {
 			end = len(ids)
 		}
-		chunk, err := falconDetails(ctx, hc, base, token, ids[i:end])
+		chunk, next, err := falconDetails(ctx, hc, base, cfg.ClientID, cfg.ClientSecret, token, ids[i:end])
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, chunk...)
+		token = next
+		for _, obs := range chunk {
+			if seen[obs.NativeID] {
+				continue
+			}
+			seen[obs.NativeID] = true
+			out = append(out, obs)
+		}
 	}
 	return out, nil
 }
 
-func falconToken(ctx context.Context, hc *http.Client, base, clientID, clientSecret string) (string, error) {
+func falconCacheKey(base, clientID, secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return base + "\n" + clientID + "\n" + hex.EncodeToString(sum[:8])
+}
+
+func falconToken(ctx context.Context, hc *http.Client, base, clientID, clientSecret string, force bool) (string, error) {
+	key := falconCacheKey(base, clientID, clientSecret)
+	falconTokens.Lock()
+	if !force {
+		if ent, ok := falconCache[key]; ok && time.Until(ent.until) > 30*time.Second {
+			falconTokens.Unlock()
+			return ent.token, nil
+		}
+	} else {
+		delete(falconCache, key)
+	}
+	falconTokens.Unlock()
+
 	form := url.Values{}
 	form.Set("client_id", clientID)
 	form.Set("client_secret", clientSecret)
@@ -69,71 +114,113 @@ func falconToken(ctx context.Context, hc *http.Client, base, clientID, clientSec
 	}
 	var body struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil || body.AccessToken == "" {
 		return "", fmt.Errorf("falcon oauth: token missing")
 	}
+	if body.ExpiresIn <= 0 {
+		body.ExpiresIn = 1800
+	}
+	falconTokens.Lock()
+	falconCache[key] = falconTokenEntry{token: body.AccessToken, until: time.Now().Add(time.Duration(body.ExpiresIn) * time.Second)}
+	falconTokens.Unlock()
 	return body.AccessToken, nil
 }
 
-func falconIDs(ctx context.Context, hc *http.Client, base, token string) ([]string, error) {
+func falconIDs(ctx context.Context, hc *http.Client, base, clientID, secret, token string) ([]string, string, error) {
 	var ids []string
+	seen := map[string]struct{}{}
 	offset := ""
-	for page := 0; page < 40; page++ {
+	refreshed := false
+	for page := 0; page < falconMaxPages; page++ {
 		u := base + "/devices/queries/devices-scroll/v1?limit=5000"
 		if offset != "" {
 			u += "&offset=" + url.QueryEscape(offset)
 		}
 		req, err := http.NewRequest(http.MethodGet, u, nil)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		raw, status, err := doJSON(ctx, hc, req)
 		if err != nil {
-			return nil, fmt.Errorf("falcon devices: %w", err)
+			return nil, "", fmt.Errorf("falcon devices: %w", err)
+		}
+		if status == http.StatusUnauthorized && !refreshed {
+			token, err = falconToken(ctx, hc, base, clientID, secret, true)
+			if err != nil {
+				return nil, "", err
+			}
+			refreshed = true
+			page--
+			continue
 		}
 		if status >= 300 {
-			return nil, statusError("falcon devices", status)
+			return nil, "", statusError("falcon devices", status)
 		}
 		var body struct {
 			Resources []string `json:"resources"`
 			Meta      struct {
 				Pagination struct {
 					Offset string `json:"offset"`
+					Total  int    `json:"total"`
 				} `json:"pagination"`
 			} `json:"meta"`
 		}
 		if err := json.Unmarshal(raw, &body); err != nil {
-			return nil, fmt.Errorf("falcon devices: decode: %w", err)
+			return nil, "", fmt.Errorf("falcon devices: decode: %w", err)
 		}
-		if len(body.Resources) == 0 {
-			break
+		for _, id := range body.Resources {
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			ids = append(ids, id)
 		}
-		ids = append(ids, body.Resources...)
 		next := body.Meta.Pagination.Offset
-		if next == "" || next == offset {
-			break
+		total := body.Meta.Pagination.Total
+		if len(body.Resources) == 0 || next == "" || next == offset || (total > 0 && len(ids) >= total) {
+			return ids, token, nil
 		}
 		offset = next
 	}
-	return ids, nil
+	return nil, "", fmt.Errorf("falcon devices: scroll truncated before the offset was exhausted")
 }
 
-func falconDetails(ctx context.Context, hc *http.Client, base, token string, ids []string) ([]Observation, error) {
+func falconDetails(ctx context.Context, hc *http.Client, base, clientID, secret, token string, ids []string) ([]Observation, string, error) {
 	payload, _ := json.Marshal(map[string]any{"ids": ids})
 	req, err := http.NewRequest(http.MethodPost, base+"/devices/entities/devices/v2", bytes.NewReader(payload))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	raw, status, err := doJSON(ctx, hc, req)
 	if err != nil {
-		return nil, fmt.Errorf("falcon device details: %w", err)
+		return nil, "", fmt.Errorf("falcon device details: %w", err)
+	}
+	if status == http.StatusUnauthorized {
+		token, err = falconToken(ctx, hc, base, clientID, secret, true)
+		if err != nil {
+			return nil, "", err
+		}
+		req, err = http.NewRequest(http.MethodPost, base+"/devices/entities/devices/v2", bytes.NewReader(payload))
+		if err != nil {
+			return nil, "", err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		raw, status, err = doJSON(ctx, hc, req)
+		if err != nil {
+			return nil, "", fmt.Errorf("falcon device details: %w", err)
+		}
 	}
 	if status >= 300 {
-		return nil, statusError("falcon device details", status)
+		return nil, "", statusError("falcon device details", status)
 	}
 	var body struct {
 		Resources []struct {
@@ -148,7 +235,7 @@ func falconDetails(ctx context.Context, hc *http.Client, base, token string, ids
 		} `json:"resources"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
-		return nil, fmt.Errorf("falcon device details: decode: %w", err)
+		return nil, "", fmt.Errorf("falcon device details: decode: %w", err)
 	}
 	out := make([]Observation, 0, len(body.Resources))
 	for _, d := range body.Resources {
@@ -167,11 +254,8 @@ func falconDetails(ctx context.Context, hc *http.Client, base, token string, ids
 				Hostname: d.Hostname,
 			},
 		}
-		if obs.LastSeen.IsZero() {
-			obs.LastSeen = time.Time{}
-		}
 		obs.Fields = obs.NormalizedFields()
 		out = append(out, obs)
 	}
-	return out, nil
+	return out, token, nil
 }

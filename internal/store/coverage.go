@@ -58,12 +58,12 @@ func (s *Store) CreateConnector(ctx context.Context, p model.Principal, in model
 		INSERT INTO source_connectors (
 			id, name, source, mode, enabled, interval_seconds, stale_after_seconds,
 			base_url, client_id, client_secret, api_token, elastic_url, elastic_api_key,
-			index_pattern, query_text, query_language, time_field, field_map, managed_by,
+			index_pattern, query_text, query_language, time_field, time_zone, field_map, managed_by,
 			created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18::jsonb,$19,$20,$20)`,
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19::jsonb,$20,$21,$21)`,
 		id, in.Name, in.Source, in.Mode, in.Enabled, in.IntervalSeconds, in.StaleAfterSeconds,
 		in.BaseURL, in.ClientID, in.ClientSecret, in.APIToken, in.ElasticURL, in.ElasticAPIKey,
-		in.IndexPattern, in.Query, in.QueryLanguage, in.TimeField, string(fieldRaw), managedBy(in.ManagedBy), now)
+		in.IndexPattern, in.Query, in.QueryLanguage, in.TimeField, in.TimeZone, string(fieldRaw), managedBy(in.ManagedBy), now)
 	if err != nil {
 		return model.Connector{}, mapWriteErr(err)
 	}
@@ -111,12 +111,12 @@ func (s *Store) UpdateConnector(ctx context.Context, p model.Principal, id strin
 		UPDATE source_connectors SET
 			name=$2, mode=$3, enabled=$4, interval_seconds=$5, stale_after_seconds=$6,
 			base_url=$7, client_id=$8, client_secret=$9, api_token=$10, elastic_url=$11, elastic_api_key=$12,
-			index_pattern=$13, query_text=$14, query_language=$15, time_field=$16, field_map=$17::jsonb,
-			managed_by=$18, updated_at=$19
+			index_pattern=$13, query_text=$14, query_language=$15, time_field=$16, time_zone=$17, field_map=$18::jsonb,
+			managed_by=$19, updated_at=$20
 		WHERE id=$1`,
 		id, in.Name, in.Mode, in.Enabled, in.IntervalSeconds, in.StaleAfterSeconds,
 		in.BaseURL, in.ClientID, in.ClientSecret, in.APIToken, in.ElasticURL, in.ElasticAPIKey,
-		in.IndexPattern, in.Query, in.QueryLanguage, in.TimeField, string(fieldRaw), managedBy(in.ManagedBy), now)
+		in.IndexPattern, in.Query, in.QueryLanguage, in.TimeField, in.TimeZone, string(fieldRaw), managedBy(in.ManagedBy), now)
 	if err != nil {
 		return model.Connector{}, mapWriteErr(err)
 	}
@@ -247,6 +247,12 @@ func normalizeConnector(in *model.Connector) error {
 	if in.TimeField == "" {
 		in.TimeField = "@timestamp"
 	}
+	if in.TimeZone == "" {
+		in.TimeZone = "UTC"
+	}
+	if _, err := time.LoadLocation(in.TimeZone); err != nil {
+		return invalid("time_zone must be an IANA name such as UTC")
+	}
 	if in.FieldMap == nil {
 		in.FieldMap = map[string]string{}
 	}
@@ -283,7 +289,7 @@ func checkHTTPURL(field, v string) error {
 
 const connectorCols = `id, name, source, mode, enabled, interval_seconds, stale_after_seconds,
 	base_url, client_id, client_secret, api_token, elastic_url, elastic_api_key,
-	index_pattern, query_text, query_language, time_field, field_map, managed_by,
+	index_pattern, query_text, query_language, time_field, time_zone, field_map, managed_by,
 	last_sync_at, last_sync_status, last_sync_error, last_sync_count, created_at, updated_at`
 
 func (s *Store) loadConnector(ctx context.Context, id string) (storedConnector, error) {
@@ -323,7 +329,7 @@ func scanConnector(row scannable) (storedConnector, error) {
 	err := row.Scan(
 		&c.ID, &c.Name, &c.Source, &c.Mode, &c.Enabled, &c.IntervalSeconds, &c.StaleAfterSeconds,
 		&c.BaseURL, &c.ClientID, &c.clientSecret, &c.apiToken, &c.ElasticURL, &c.elasticAPIKey,
-		&c.IndexPattern, &c.Query, &c.QueryLanguage, &c.TimeField, &fieldRaw, &c.ManagedBy,
+		&c.IndexPattern, &c.Query, &c.QueryLanguage, &c.TimeField, &c.TimeZone, &fieldRaw, &c.ManagedBy,
 		&last, &c.LastSyncStatus, &c.LastSyncError, &c.LastSyncCount, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return storedConnector{}, err

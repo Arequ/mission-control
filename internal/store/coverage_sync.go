@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -33,10 +34,18 @@ func (s *Store) SyncDueConnectors(ctx context.Context) error {
 }
 
 func (s *Store) syncConnector(ctx context.Context, c storedConnector) {
+	locked, err := s.lockConnector(ctx, c.ID)
+	if err != nil {
+		slog.Error("connector sync lock", "connector", c.ID, "source", c.Source, "err", err.Error())
+		return
+	}
+	if !locked {
+		return
+	}
+	defer s.unlockConnector(ctx, c.ID)
 	status := "ok"
 	count := 0
 	msg := ""
-	var err error
 	switch {
 	case c.Mode == "native" && c.Source == "osquery":
 		err = s.ProjectOsquery(ctx)
@@ -89,16 +98,37 @@ func (s *Store) pollConnector(ctx context.Context, c storedConnector) (int, erro
 		Source: c.Source, Mode: c.Mode, BaseURL: c.BaseURL, ClientID: c.ClientID,
 		ClientSecret: c.clientSecret, APIToken: c.apiToken, ElasticURL: c.ElasticURL,
 		ElasticAPIKey: c.elasticAPIKey, IndexPattern: c.IndexPattern, Query: c.Query,
-		QueryLanguage: c.QueryLanguage, TimeField: c.TimeField, FieldMap: c.FieldMap,
+		QueryLanguage: c.QueryLanguage, TimeField: c.TimeField, TimeZone: c.TimeZone, FieldMap: c.FieldMap,
 		Lookback: lookback, Now: s.now(),
 	}, hc)
 	if err != nil {
 		return 0, err
 	}
-	if err := s.ApplyObservations(ctx, c.Source, obs, true, true); err != nil {
+	opts := applyOpts{full: true, events: true}
+	if c.Mode == "elastic" {
+		opts.keepBefore = s.now().Add(-lookback)
+	}
+	if err := s.applyObservations(ctx, c.Source, obs, opts); err != nil {
 		return 0, err
 	}
 	return len(obs), nil
+}
+
+func (s *Store) lockConnector(ctx context.Context, id string) (bool, error) {
+	now := s.now()
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE source_connectors
+		SET sync_lock_until = $2
+		WHERE id = $1 AND (sync_lock_until IS NULL OR sync_lock_until < $3)`,
+		id, now.Add(2*time.Minute), now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+func (s *Store) unlockConnector(ctx context.Context, id string) {
+	_, _ = s.pool.Exec(ctx, `UPDATE source_connectors SET sync_lock_until = NULL WHERE id = $1`, id)
 }
 
 func (s *Store) countSnapshots(ctx context.Context, source string) (int, error) {
@@ -112,7 +142,12 @@ func redact(msg string, secrets ...string) string {
 		if len(secret) < 4 {
 			continue
 		}
-		msg = strings.ReplaceAll(msg, secret, "[redacted]")
+		for _, form := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
+			if form == "" {
+				continue
+			}
+			msg = strings.ReplaceAll(msg, form, "[redacted]")
+		}
 	}
 	return msg
 }

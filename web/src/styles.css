@@ -816,6 +816,7 @@ html.dark .textlink { color: var(--accent-ink); }
 .back:hover { color: var(--text); }
 .match-note { margin: 8px 0 0; color: var(--text-2); font-size: 13px; }
 .cov-table { min-width: 760px; }
+.cov-body { max-height: min(68vh, 720px); overflow: auto; scrollbar-gutter: stable; }
 .cov-head, .cov-row {
   display: grid;
   grid-template-columns: minmax(220px, 1.6fr) repeat(8, 52px) 56px;
@@ -833,7 +834,9 @@ html.dark .textlink { color: var(--accent-ink); }
 .cov-h b { font-size: 10px; font-weight: 600; color: var(--text-3); letter-spacing: 0; }
 .cov-row {
   position: relative;
-  padding: 10px 14px;
+  height: 52px;
+  padding: 6px 14px;
+  overflow: hidden;
   text-decoration: none;
   color: inherit;
   border-radius: 12px;

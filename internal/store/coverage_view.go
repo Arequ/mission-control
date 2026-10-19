@@ -35,17 +35,26 @@ func (s *Store) CoverageMatrix(ctx context.Context, kind, source, q string, stal
 		return model.CoverageMatrix{}, err
 	}
 	now := s.now()
+	enrolled := fleetRows(rows)
 	gaps := 0
-	for _, row := range rows {
+	for _, row := range enrolled {
 		if coverage.HasGaps(cellsOf(row)) {
 			gaps++
 		}
 	}
-	filtered := rows[:0:0]
+	filtered := make([]model.CoverageRow, 0, len(rows))
 	needle := strings.ToLower(strings.TrimSpace(q))
 	for _, row := range rows {
 		if needle != "" && !strings.Contains(strings.ToLower(row.Name+" "+row.Hostname+" "+row.Serial+" "+row.User), needle) {
 			continue
+		}
+		// Gap, missing, single, and stale describe the enrolled fleet.
+		// Ghosts and conflicts stay on their own filters.
+		switch kind {
+		case "gaps", "missing", "single", "stale":
+			if row.Kind != "device" {
+				continue
+			}
 		}
 		if !coverage.Keep(cellsOf(row), coverage.Filter{Kind: kind, Source: source, StaleDays: staleDays}, now) {
 			continue
@@ -75,7 +84,7 @@ func (s *Store) CoverageMatrix(ctx context.Context, kind, source, q string, stal
 	cols := make([]model.CoverageSourceColumn, 0, len(coverage.Sources))
 	for _, src := range coverage.Sources {
 		seen := 0
-		for _, row := range rows {
+		for _, row := range enrolled {
 			for _, cell := range row.Cells {
 				if cell.Source == src.Key && cell.State == coverage.Seen {
 					seen++
@@ -84,13 +93,25 @@ func (s *Store) CoverageMatrix(ctx context.Context, kind, source, q string, stal
 		}
 		cols = append(cols, model.CoverageSourceColumn{
 			Key: src.Key, Name: src.Name, Short: src.Short,
-			Percent: coverage.Percent(seen, len(rows)), StaleAfterSeconds: int(thresholds[src.Key] / time.Second),
+			Percent: coverage.Percent(seen, len(enrolled)), StaleAfterSeconds: int(thresholds[src.Key] / time.Second),
 		})
 	}
 	if page == nil {
 		page = []model.CoverageRow{}
 	}
 	return model.CoverageMatrix{Sources: cols, Rows: page, Total: total, Gaps: gaps, Limit: limit, Offset: offset}, nil
+}
+
+// fleetRows is the coverage denominator: enrolled devices only.
+// Ghosts are not in the fleet yet, and there is no retired-device state.
+func fleetRows(rows []model.CoverageRow) []model.CoverageRow {
+	out := make([]model.CoverageRow, 0, len(rows))
+	for _, row := range rows {
+		if row.Kind == "device" {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 func clampPage(limit, offset int) (int, int) {

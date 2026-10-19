@@ -1,9 +1,14 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { api, type CoverageDevice, type CoverageMatrix, type SourceConnector } from "../api";
+import { api, type CoverageDevice, type CoverageMatrix, type CoverageRow, type SourceConnector } from "../api";
 import { Empty, Mark, Page, Toolbar, ago, enterStyle, useSearch, when } from "../ui";
 
+const pageSize = 100;
+const rowHeight = 52;
+
 const missingSources = [
+  ["osquery", "osquery"],
+  ["munki", "Munki"],
   ["crowdstrike", "CrowdStrike"],
   ["rapid7", "Rapid7"],
   ["netskope", "Netskope"],
@@ -16,31 +21,38 @@ export function CoveragePage() {
   const { q } = useSearch();
   const [filter, setFilter] = useState("all");
   const [source, setSource] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [seenQ, setSeenQ] = useState(q);
   const [data, setData] = useState<CoverageMatrix | null>(null);
   const [error, setError] = useState("");
+  if (q !== seenQ) {
+    setSeenQ(q);
+    setOffset(0);
+  }
 
   useEffect(() => {
     let stop = false;
     const load = () => {
-      api.coverageMatrix({ filter: filter === "all" ? "" : filter, source, staleDays: 7, q, limit: 100 })
+      api.coverageMatrix({ filter: filter === "all" ? "" : filter, source, staleDays: 7, q, limit: pageSize, offset })
         .then((next) => { if (!stop) { setData(next); setError(""); } })
         .catch((err: Error) => { if (!stop) setError(err.message); });
     };
     load();
     const t = setInterval(load, 8000);
     return () => { stop = true; clearInterval(t); };
-  }, [filter, source, q]);
+  }, [filter, source, q, offset]);
 
   const choose = (next: string, src = "") => {
     setFilter(next);
     setSource(src);
+    setOffset(0);
   };
 
   return (
     <Page>
       <Toolbar
         title="Security Coverage"
-        lede={data ? `${data.total} endpoints · ${data.gaps} with a gap` : "Which tools see each endpoint"}
+        lede={data ? (filter === "all" && !source && !q ? `${data.total} endpoints · ${data.gaps} with a gap` : `${data.total} matching · ${data.gaps} fleet gaps`) : "Which tools see each endpoint"}
         extra={<Link className="capsule" to="/coverage/connectors">Connectors</Link>}
       />
       <div className="content fleet">
@@ -58,47 +70,86 @@ export function CoveragePage() {
           ))}
         </div>
         <section className="card">
-          {!data || data.rows.length === 0 ? (
-            <Empty>{error ? "Could not load coverage." : "Nothing matches this filter."}</Empty>
+          {!data && !error ? (
+            <Empty>Loading coverage.</Empty>
+          ) : !data ? (
+            <Empty>Could not load coverage.</Empty>
+          ) : data.rows.length === 0 ? (
+            <Empty>Nothing matches this filter.</Empty>
           ) : (
             <div className="table-wrap">
-              <div className="cov-table">
-                <div className="cov-head">
-                  <span>Device</span>
-                  {data.sources.map((src) => (
-                    <span key={src.key} className="cov-h" title={src.name}>
-                      {src.short}
-                      <b>{src.percent.toFixed(1)}%</b>
-                    </span>
-                  ))}
-                  <span className="cov-h">Seen</span>
-                </div>
-                {data.rows.map((row, index) => (
-                  <Link key={row.id} to={`/coverage/devices/${row.id}`} className="cov-row enter" style={enterStyle(index)}>
-                    <span className="who">
-                      <Mark name={row.name || row.hostname || row.serial} />
-                      <span>
-                        <span className="name">{row.name || row.hostname || row.serial}</span>
-                        <span className="subline">
-                          {row.kind === "ghost" ? "Ghost · " : row.kind === "conflict" ? "Conflict · " : ""}
-                          {[row.user, row.serial].filter(Boolean).join(" · ") || "No serial"}
-                        </span>
-                      </span>
-                    </span>
-                    {row.cells.map((cell) => (
-                      <span key={cell.source} className={`cov-cell ${cell.state}`} title={`${cell.source}: ${cell.state}`}>
-                        <i />
-                      </span>
-                    ))}
-                    <span className="cov-count">{row.seen}/{row.total}</span>
-                  </Link>
+              <MatrixRows rows={data.rows}>
+                <span>Device</span>
+                {data.sources.map((src) => (
+                  <span key={src.key} className="cov-h" title={`${src.name}: ${src.percent.toFixed(1)}% of enrolled devices`}>
+                    {src.short}
+                    <b>{src.percent.toFixed(1)}%</b>
+                  </span>
                 ))}
+                <span className="cov-h">Seen</span>
+              </MatrixRows>
+              <div className="pager">
+                <span className="faint">{data.total === 0 ? "Showing 0" : `Showing ${data.offset + 1}–${data.offset + data.rows.length} of ${data.total}`}</span>
+                <span className="grow" />
+                <button className="capsule" type="button" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>Previous</button>
+                <button className="capsule" type="button" disabled={offset + pageSize >= data.total} onClick={() => setOffset(offset + pageSize)}>Next</button>
               </div>
             </div>
           )}
         </section>
       </div>
     </Page>
+  );
+}
+
+function MatrixRows({ rows, children }: { rows: CoverageRow[]; children: ReactNode }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const [scroll, setScroll] = useState(0);
+  const [gutter, setGutter] = useState(0);
+  const windowRows = 18;
+  const start = Math.max(0, Math.floor(scroll / rowHeight) - 2);
+  const end = Math.min(rows.length, start + windowRows);
+  const slice = rows.slice(start, end);
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    if (!el) return;
+    setGutter(Math.max(0, el.offsetWidth - el.clientWidth));
+  }, [rows.length, scroll]);
+  return (
+    <div className="cov-table">
+      <div className="cov-head" style={{ paddingRight: 14 + gutter }}>{children}</div>
+      <div ref={scroller} className="cov-body" onScroll={(event) => setScroll(event.currentTarget.scrollTop)}>
+      <div style={{ height: rows.length * rowHeight, position: "relative" }}>
+        <div style={{ transform: `translateY(${start * rowHeight}px)` }}>
+          {slice.map((row, index) => (
+            <Link
+              key={row.id}
+              to={`/coverage/devices/${row.id}`}
+              className={`cov-row${start + index < 8 ? " enter" : ""}`}
+              style={{ ...(start + index < 8 ? enterStyle(start + index) : {}), height: rowHeight }}
+            >
+              <span className="who">
+                <Mark name={row.name || row.hostname || row.serial} />
+                <span>
+                  <span className="name">{row.name || row.hostname || row.serial}</span>
+                  <span className="subline">
+                    {row.kind === "ghost" ? "Ghost · " : row.kind === "conflict" ? "Conflict · " : ""}
+                    {[row.user, row.serial].filter(Boolean).join(" · ") || "No serial"}
+                  </span>
+                </span>
+              </span>
+              {row.cells.map((cell) => (
+                <span key={cell.source} className={`cov-cell ${cell.state}`} title={`${cell.source}: ${cell.state}`}>
+                  <i />
+                </span>
+              ))}
+              <span className="cov-count">{row.seen}/{row.total}</span>
+            </Link>
+          ))}
+        </div>
+      </div>
+      </div>
+    </div>
   );
 }
 
@@ -115,10 +166,12 @@ export function CoverageDevicePage() {
 
   useEffect(() => {
     let stop = false;
+    setDevice(null);
+    setError("");
     const load = () => {
       api.coverageDevice(id)
         .then((next) => { if (!stop) { setDevice(next); setError(""); } })
-        .catch((err: Error) => { if (!stop) setError(err.message); });
+        .catch((err: Error) => { if (!stop) { setDevice(null); setError(err.message); } });
     };
     load();
     const t = setInterval(load, 8000);
@@ -130,6 +183,8 @@ export function CoverageDevicePage() {
       <div className="content fleet coverage-device">
         <Link className="back" to="/coverage">Security Coverage</Link>
         {error ? <p className="note">{error}</p> : null}
+        {!device && error ? <Empty>Could not load this device.</Empty> : null}
+        {!device && !error ? <Empty>Loading coverage.</Empty> : null}
         {device ? (
           <>
             <header className="hero enter" style={enterStyle(0)}>

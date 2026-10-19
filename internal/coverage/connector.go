@@ -1,10 +1,12 @@
 package coverage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -26,21 +28,22 @@ type Observation struct {
 // Config is the connector settings a poll needs. Secrets are in memory for the
 // call and must not be logged.
 type Config struct {
-	Source         string
-	Mode           string
-	BaseURL        string
-	ClientID       string
-	ClientSecret   string
-	APIToken       string
-	ElasticURL     string
-	ElasticAPIKey  string
-	IndexPattern   string
-	Query          string
-	QueryLanguage  string
-	TimeField      string
-	FieldMap       map[string]string
-	Lookback       time.Duration
-	Now            time.Time
+	Source        string
+	Mode          string
+	BaseURL       string
+	ClientID      string
+	ClientSecret  string
+	APIToken      string
+	ElasticURL    string
+	ElasticAPIKey string
+	IndexPattern  string
+	Query         string
+	QueryLanguage string
+	TimeField     string
+	TimeZone      string
+	FieldMap      map[string]string
+	Lookback      time.Duration
+	Now           time.Time
 }
 
 // Poller fetches the latest device records for one ingestion mode.
@@ -98,17 +101,52 @@ func (o Observation) NormalizedFields() map[string]string {
 }
 
 func doJSON(ctx context.Context, hc *http.Client, req *http.Request) ([]byte, int, error) {
-	req = req.WithContext(ctx)
-	res, err := hc.Do(req)
-	if err != nil {
-		return nil, 0, err
+	var body []byte
+	if req.Body != nil {
+		var err error
+		body, err = io.ReadAll(req.Body)
+		_ = req.Body.Close()
+		if err != nil {
+			return nil, 0, err
+		}
 	}
-	defer res.Body.Close()
-	b, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
-	if err != nil {
-		return nil, res.StatusCode, err
+	var last []byte
+	var status int
+	for attempt := 0; attempt < 5; attempt++ {
+		call := req.Clone(ctx)
+		if body != nil {
+			call.Body = io.NopCloser(bytes.NewReader(body))
+			call.ContentLength = int64(len(body))
+		}
+		res, err := hc.Do(call)
+		if err != nil {
+			return nil, 0, err
+		}
+		b, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
+		_ = res.Body.Close()
+		if err != nil {
+			return nil, res.StatusCode, err
+		}
+		last, status = b, res.StatusCode
+		if res.StatusCode != http.StatusTooManyRequests && res.StatusCode != http.StatusServiceUnavailable {
+			return b, res.StatusCode, nil
+		}
+		wait := time.Duration(attempt+1) * 200 * time.Millisecond
+		if n, err := strconv.Atoi(strings.TrimSpace(res.Header.Get("Retry-After"))); err == nil && n >= 0 {
+			wait = time.Duration(n) * time.Second
+		}
+		if wait > 5*time.Second {
+			wait = 5 * time.Second
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return b, res.StatusCode, ctx.Err()
+		case <-timer.C:
+		}
 	}
-	return b, res.StatusCode, nil
+	return last, status, nil
 }
 
 func statusError(op string, status int) error {
@@ -117,17 +155,4 @@ func statusError(op string, status int) error {
 
 func trimURL(s string) string {
 	return strings.TrimRight(strings.TrimSpace(s), "/")
-}
-
-func parseTime(s string) time.Time {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return time.Time{}
-	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05", "2006-01-02T15:04:05"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC()
-		}
-	}
-	return time.Time{}
 }

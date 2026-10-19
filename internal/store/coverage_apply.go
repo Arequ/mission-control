@@ -35,12 +35,24 @@ type snapRow struct {
 	MatchedOn  []string
 	Confidence string
 	Note       string
+	LastSeen   time.Time
+}
+
+type applyOpts struct {
+	full       bool
+	events     bool
+	keepBefore time.Time
 }
 
 // ApplyObservations upserts one source's latest view of each device.
-// full removes snapshots the source no longer reports. events records
-// sightings, losses, disagreements, and rematches.
+// full removes snapshots the source no longer reports. An empty batch never
+// deletes: a failed or empty poll must not mark the fleet missing. events
+// records sightings, losses, disagreements, and rematches.
 func (s *Store) ApplyObservations(ctx context.Context, source string, obs []coverage.Observation, full, events bool) error {
+	return s.applyObservations(ctx, source, obs, applyOpts{full: full, events: events})
+}
+
+func (s *Store) applyObservations(ctx context.Context, source string, obs []coverage.Observation, opts applyOpts) error {
 	if !coverage.KnownSource(source) {
 		return invalid("unknown coverage source")
 	}
@@ -60,6 +72,50 @@ func (s *Store) ApplyObservations(ctx context.Context, source string, obs []cove
 	if err != nil {
 		return err
 	}
+	anchors, err := s.loadGhostAnchors(ctx, source)
+	if err != nil {
+		return err
+	}
+	ev := coverage.Evidence{SerialUUIDs: map[string]map[string]struct{}{}}
+	for _, o := range obs {
+		addEvidence(&ev, o.Keys.Serial, o.Keys.HardwareUUID)
+	}
+	type pendingObs struct {
+		obs   coverage.Observation
+		match coverage.Match
+	}
+	var pending []pendingObs
+	seenNative := map[string]bool{}
+	for _, o := range obs {
+		if strings.TrimSpace(o.NativeID) == "" || seenNative[o.NativeID] {
+			continue
+		}
+		seenNative[o.NativeID] = true
+		pending = append(pending, pendingObs{obs: o, match: coverage.ResolveObserved(o.Keys, candidates, ev)})
+	}
+	// A failed or empty poll must not mark everything missing.
+	if len(pending) == 0 {
+		return nil
+	}
+	records := make([]coverage.IdentityRecord, 0, len(anchors)+len(pending))
+	records = append(records, anchors...)
+	unmatchedAt := make([]int, 0)
+	for i, p := range pending {
+		if p.match.DeviceID != "" {
+			continue
+		}
+		unmatchedAt = append(unmatchedAt, i)
+		records = append(records, coverage.IdentityRecord{
+			Source: source, NativeID: p.obs.NativeID, Keys: p.obs.Keys,
+			Conflict: p.match.Confidence == "conflict",
+		})
+	}
+	assigned := coverage.AssignGhostKeys(records)
+	ghostFor := map[int]string{}
+	for j, idx := range unmatchedAt {
+		ghostFor[idx] = assigned[len(anchors)+j]
+	}
+
 	had := map[string]bool{}
 	for _, row := range existing {
 		had[row.SubjectID] = true
@@ -71,22 +127,16 @@ func (s *Store) ApplyObservations(ctx context.Context, source string, obs []cove
 	}
 	defer tx.Rollback(ctx)
 
-	seenNative := map[string]bool{}
 	remaining := map[string]int{}
-	for _, o := range obs {
-		if strings.TrimSpace(o.NativeID) == "" {
-			continue
-		}
-		if seenNative[o.NativeID] {
-			continue
-		}
-		seenNative[o.NativeID] = true
-		match := coverage.Resolve(o.Keys, candidates)
+	full, events := opts.full, opts.events
+	for i, p := range pending {
+		o := p.obs
+		match := p.match
 		conflict := match.Confidence == "conflict"
 		ghostKey := ""
 		deviceID := match.DeviceID
 		if deviceID == "" {
-			ghostKey = coverage.GhostKey(source, o.NativeID, o.Keys, conflict)
+			ghostKey = ghostFor[i]
 		}
 		subject := coverage.SubjectID(deviceID, ghostKey)
 		fields := o.NormalizedFields()
@@ -183,6 +233,11 @@ func (s *Store) ApplyObservations(ctx context.Context, source string, obs []cove
 			if seenNative[native] {
 				continue
 			}
+			// Elastic windows age out. Keep the snapshot so the device stays
+			// stale instead of flipping to missing when the event leaves the query.
+			if !opts.keepBefore.IsZero() && !prev.LastSeen.IsZero() && prev.LastSeen.Before(opts.keepBefore) {
+				continue
+			}
 			if _, err := tx.Exec(ctx, `DELETE FROM source_snapshots WHERE source=$1 AND native_id=$2`, source, native); err != nil {
 				return err
 			}
@@ -233,7 +288,7 @@ func (s *Store) loadDeviceFacts(ctx context.Context) ([]deviceFacts, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, computer_name, serial, hardware_uuid, primary_mac, hostname, username,
 			os_version, primary_ip, osquery_version, hardware_model, last_seen_at
-		FROM devices`)
+		FROM devices ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -253,9 +308,44 @@ func (s *Store) loadDeviceFacts(ctx context.Context) ([]deviceFacts, error) {
 	return out, rows.Err()
 }
 
+func addEvidence(ev *coverage.Evidence, serial, uuid string) {
+	k := coverage.NormalizeKeys(coverage.Keys{Serial: serial, HardwareUUID: uuid})
+	if k.Serial == "" || k.HardwareUUID == "" {
+		return
+	}
+	if ev.SerialUUIDs == nil {
+		ev.SerialUUIDs = map[string]map[string]struct{}{}
+	}
+	if ev.SerialUUIDs[k.Serial] == nil {
+		ev.SerialUUIDs[k.Serial] = map[string]struct{}{}
+	}
+	ev.SerialUUIDs[k.Serial][k.HardwareUUID] = struct{}{}
+}
+
+func (s *Store) loadGhostAnchors(ctx context.Context, source string) ([]coverage.IdentityRecord, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT source, native_id, serial, hardware_uuid, mac, hostname, primary_user, confidence
+		FROM source_snapshots WHERE device_id IS NULL AND source <> $1`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []coverage.IdentityRecord
+	for rows.Next() {
+		var rec coverage.IdentityRecord
+		var confidence string
+		if err := rows.Scan(&rec.Source, &rec.NativeID, &rec.Keys.Serial, &rec.Keys.HardwareUUID, &rec.Keys.MAC, &rec.Keys.Hostname, &rec.Keys.PrimaryUser, &confidence); err != nil {
+			return nil, err
+		}
+		rec.Conflict = confidence == "conflict"
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) loadSourceSnapshots(ctx context.Context, source string) (map[string]snapRow, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, native_id, COALESCE(device_id,''), subject_id, ghost_key, fields, matched_on, confidence, match_note
+		SELECT id, native_id, COALESCE(device_id,''), subject_id, ghost_key, fields, matched_on, confidence, match_note, last_seen_at
 		FROM source_snapshots WHERE source=$1`, source)
 	if err != nil {
 		return nil, err
@@ -275,8 +365,12 @@ func (s *Store) loadSourceSnapshots(ctx context.Context, source string) (map[str
 func scanSnap(row scannable) (snapRow, error) {
 	var s snapRow
 	var raw []byte
-	if err := row.Scan(&s.ID, &s.NativeID, &s.DeviceID, &s.SubjectID, &s.GhostKey, &raw, &s.MatchedOn, &s.Confidence, &s.Note); err != nil {
+	var last *time.Time
+	if err := row.Scan(&s.ID, &s.NativeID, &s.DeviceID, &s.SubjectID, &s.GhostKey, &raw, &s.MatchedOn, &s.Confidence, &s.Note, &last); err != nil {
 		return snapRow{}, err
+	}
+	if last != nil {
+		s.LastSeen = last.UTC()
 	}
 	s.Fields = map[string]string{}
 	if len(raw) > 0 {

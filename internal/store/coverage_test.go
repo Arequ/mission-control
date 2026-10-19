@@ -65,8 +65,8 @@ func TestIdentitySnapshotsAndCoverageMath(t *testing.T) {
 	s := newCoverageStore(t)
 	ctx := context.Background()
 	p := model.Principal{Kind: "api_token", Name: "test"}
-	a := enrollDevice(t, s, "dev-a", "SER-A", "uuid-a", "02:00:00:00:00:0a", "mbp-a", "ava")
-	b := enrollDevice(t, s, "dev-b", "SER-B", "uuid-b", "02:00:00:00:00:0b", "mba-b", "noah")
+	a := enrollDevice(t, s, "dev-a", "SER-A", "uuid-a", "00:1a:2b:3c:4d:0a", "mbp-a", "ava")
+	b := enrollDevice(t, s, "dev-b", "SER-B", "uuid-b", "00:1a:2b:3c:4d:0b", "mba-b", "noah")
 	now := s.Now()
 
 	err := s.ApplyObservations(ctx, "crowdstrike", []coverage.Observation{
@@ -74,7 +74,7 @@ func TestIdentitySnapshotsAndCoverageMath(t *testing.T) {
 		{NativeID: "cs-placeholder", LastSeen: now.Add(-time.Minute), Keys: coverage.Keys{Serial: "System Serial Number", HardwareUUID: "uuid-b", Hostname: "mba-b"}},
 		{NativeID: "cs-ghost", LastSeen: now.Add(-time.Hour), Keys: coverage.Keys{Serial: "GHOST-1", Hostname: "unknown-mac"}},
 		{NativeID: "cs-conflict", LastSeen: now.Add(-time.Hour), Keys: coverage.Keys{Serial: "SER-A", HardwareUUID: "uuid-b"}},
-		{NativeID: "cs-mac", LastSeen: now.Add(-time.Minute), Keys: coverage.Keys{MAC: "02-00-00-00-00-0A", Hostname: "wrong-host"}},
+		{NativeID: "cs-mac", LastSeen: now.Add(-time.Minute), Keys: coverage.Keys{MAC: "00-1A-2B-3C-4D-0A", Hostname: "wrong-host"}},
 	}, true, true)
 	if err != nil {
 		t.Fatal(err)

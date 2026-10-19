@@ -1,6 +1,6 @@
 module github.com/Arequ/mission-control/terraform-provider-missioncontrol
 
-go 1.27.0
+go 1.27.2
 
 require github.com/hashicorp/terraform-plugin-framework v1.19.0
 

@@ -471,14 +471,14 @@ type enrollSecretModel struct {
 
 func (r *enrollSecretResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An osquery enroll secret. The API stores only a hash. Keep more than one enabled secret while rotating so already-issued instructions and new agents overlap. Enrolled nodes keep their node key until it is invalidated. secret is write-only: it is sent on create and update, never stored in state, and never returned by the API. Import leaves secret_fingerprint null, so import does not plan an update.",
+		Description: "An osquery enroll secret. The API stores only a hash. Keep more than one enabled secret while rotating so already-issued instructions and new agents overlap. Enrolled nodes keep their node key until it is invalidated. secret is write-only: it is sent on create and update, never stored in state, and never returned by the API. After import, the configured secret plans one apply that records secret_fingerprint. Later rotations diff against that hash.",
 		Attributes: map[string]schema.Attribute{
 			"id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":               schema.StringAttribute{Required: true},
-			"secret":             schema.StringAttribute{Required: true, Sensitive: true, WriteOnly: true, Description: "Write-only. The API stores a hash and never returns the value. Changing it after create rotates the hash. Import does not plan an update."},
+			"secret":             schema.StringAttribute{Required: true, Sensitive: true, WriteOnly: true, Description: "Write-only. The API stores a hash and never returns the value. Changing it after create rotates the hash. After import, one apply records secret_fingerprint."},
 			"enabled":            schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
 			"managed_by":         schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
-			"secret_fingerprint": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "SHA-256 of the configured secret. Null after import."},
+			"secret_fingerprint": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "SHA-256 of the configured secret. Null immediately after import, then recorded on the next apply."},
 		},
 	}
 }

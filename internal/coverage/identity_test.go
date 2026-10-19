@@ -28,8 +28,8 @@ func TestNormalizeDropsPlaceholders(t *testing.T) {
 
 func TestResolve(t *testing.T) {
 	devs := []Candidate{
-		{ID: "a", Keys: Keys{Serial: "SER-A", HardwareUUID: "uuid-a", MAC: "02:00:00:00:00:0a", Hostname: "mbp-a", PrimaryUser: "ava"}},
-		{ID: "b", Keys: Keys{Serial: "SER-B", HardwareUUID: "uuid-b", MAC: "02:00:00:00:00:0b", Hostname: "mba-b", PrimaryUser: "noah"}},
+		{ID: "a", Keys: Keys{Serial: "SER-A", HardwareUUID: "uuid-a", MAC: "00:1a:2b:3c:4d:0a", Hostname: "mbp-a", PrimaryUser: "ava"}},
+		{ID: "b", Keys: Keys{Serial: "SER-B", HardwareUUID: "uuid-b", MAC: "00:1a:2b:3c:4d:0b", Hostname: "mba-b", PrimaryUser: "noah"}},
 	}
 	cases := []struct {
 		name string
@@ -63,7 +63,7 @@ func TestResolve(t *testing.T) {
 		},
 		{
 			name: "mac",
-			obs:  Keys{MAC: "02-00-00-00-00-0B"},
+			obs:  Keys{MAC: "00-1A-2B-3C-4D-0B"},
 			want: Match{DeviceID: "b", Confidence: "weak", MatchedOn: []string{"mac"}},
 		},
 		{
@@ -78,12 +78,12 @@ func TestResolve(t *testing.T) {
 		},
 		{
 			name: "mac contradicted by serial",
-			obs:  Keys{Serial: "SER-NOT-A-DEVICE", MAC: "02:00:00:00:00:0a"},
+			obs:  Keys{Serial: "SER-NOT-A-DEVICE", MAC: "00:1a:2b:3c:4d:0a"},
 			want: Match{Confidence: "none"},
 		},
 		{
 			name: "weak keys disagree",
-			obs:  Keys{MAC: "02:00:00:00:00:0a", Hostname: "mba-b", PrimaryUser: "noah"},
+			obs:  Keys{MAC: "00:1a:2b:3c:4d:0a", Hostname: "mba-b", PrimaryUser: "noah"},
 			want: Match{Confidence: "conflict", Candidates: []string{"a", "b"}, Note: "MAC and hostname plus primary user point at different devices"},
 		},
 	}

@@ -5,34 +5,35 @@ import "time"
 // Connector is a Terraform-managed source connector. Secrets are write-only:
 // the API accepts them and never returns them.
 type Connector struct {
-	ID                  string            `json:"id"`
-	Name                string            `json:"name"`
-	Source              string            `json:"source"`
-	Mode                string            `json:"mode"`
-	Enabled             bool              `json:"enabled"`
-	IntervalSeconds     int               `json:"interval_seconds"`
-	StaleAfterSeconds   int               `json:"stale_after_seconds"`
-	BaseURL             string            `json:"base_url"`
-	ClientID            string            `json:"client_id"`
-	ElasticURL          string            `json:"elastic_url"`
-	IndexPattern        string            `json:"index_pattern"`
-	Query               string            `json:"query"`
-	QueryLanguage       string            `json:"query_language"`
-	TimeField           string            `json:"time_field"`
-	FieldMap            map[string]string `json:"field_map"`
-	ManagedBy           string            `json:"managed_by"`
-	HasClientSecret     bool              `json:"has_client_secret"`
-	HasAPIToken         bool              `json:"has_api_token"`
-	HasElasticAPIKey    bool              `json:"has_elastic_api_key"`
-	LastSyncAt          *time.Time        `json:"last_sync_at,omitempty"`
-	LastSyncStatus      string            `json:"last_sync_status"`
-	LastSyncError       string            `json:"last_sync_error"`
-	LastSyncCount       int               `json:"last_sync_count"`
-	CreatedAt           time.Time         `json:"created_at"`
-	UpdatedAt           time.Time         `json:"updated_at"`
-	ClientSecret        string            `json:"client_secret,omitempty"`
-	APIToken            string            `json:"api_token,omitempty"`
-	ElasticAPIKey       string            `json:"elastic_api_key,omitempty"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Source            string            `json:"source"`
+	Mode              string            `json:"mode"`
+	Enabled           bool              `json:"enabled"`
+	IntervalSeconds   int               `json:"interval_seconds"`
+	StaleAfterSeconds int               `json:"stale_after_seconds"`
+	BaseURL           string            `json:"base_url"`
+	ClientID          string            `json:"client_id"`
+	ElasticURL        string            `json:"elastic_url"`
+	IndexPattern      string            `json:"index_pattern"`
+	Query             string            `json:"query"`
+	QueryLanguage     string            `json:"query_language"`
+	TimeField         string            `json:"time_field"`
+	TimeZone          string            `json:"time_zone"`
+	FieldMap          map[string]string `json:"field_map"`
+	ManagedBy         string            `json:"managed_by"`
+	HasClientSecret   bool              `json:"has_client_secret"`
+	HasAPIToken       bool              `json:"has_api_token"`
+	HasElasticAPIKey  bool              `json:"has_elastic_api_key"`
+	LastSyncAt        *time.Time        `json:"last_sync_at,omitempty"`
+	LastSyncStatus    string            `json:"last_sync_status"`
+	LastSyncError     string            `json:"last_sync_error"`
+	LastSyncCount     int               `json:"last_sync_count"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
+	ClientSecret      string            `json:"client_secret,omitempty"`
+	APIToken          string            `json:"api_token,omitempty"`
+	ElasticAPIKey     string            `json:"elastic_api_key,omitempty"`
 }
 
 // Public returns a copy safe to marshal. Secret fields are cleared.
@@ -95,21 +96,21 @@ type CoverageCell struct {
 
 // CoverageDevice is the per-device pane.
 type CoverageDevice struct {
-	ID        string               `json:"id"`
-	Kind      string               `json:"kind"`
-	Name      string               `json:"name"`
-	Hostname  string               `json:"hostname"`
-	Serial    string               `json:"serial"`
-	User      string               `json:"user"`
-	OSVersion string               `json:"os_version"`
-	Model     string               `json:"model,omitempty"`
-	DeviceID  string               `json:"device_id,omitempty"`
-	Match     CoverageMatch        `json:"match"`
-	Seen      int                  `json:"seen"`
-	Total     int                  `json:"total"`
-	Sources   []CoverageTile       `json:"sources"`
-	Fields    []CoverageField      `json:"fields"`
-	Events    []CoverageEvent      `json:"events"`
+	ID        string          `json:"id"`
+	Kind      string          `json:"kind"`
+	Name      string          `json:"name"`
+	Hostname  string          `json:"hostname"`
+	Serial    string          `json:"serial"`
+	User      string          `json:"user"`
+	OSVersion string          `json:"os_version"`
+	Model     string          `json:"model,omitempty"`
+	DeviceID  string          `json:"device_id,omitempty"`
+	Match     CoverageMatch   `json:"match"`
+	Seen      int             `json:"seen"`
+	Total     int             `json:"total"`
+	Sources   []CoverageTile  `json:"sources"`
+	Fields    []CoverageField `json:"fields"`
+	Events    []CoverageEvent `json:"events"`
 }
 
 // CoverageMatch explains which keys joined the record to a device.
