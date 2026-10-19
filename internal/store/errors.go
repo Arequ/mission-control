@@ -19,6 +19,12 @@ var ErrForbidden = errors.New("forbidden")
 // ErrEnrollRejected means the enroll secret did not match an enabled secret.
 var ErrEnrollRejected = errors.New("enroll secret rejected")
 
+// ErrStaleReport means a check-in is older than the stored run, outside clock skew.
+var ErrStaleReport = errors.New("stale report")
+
+// ErrIdempotencyReuse means an idempotency key was reused with a different body.
+var ErrIdempotencyReuse = errors.New("idempotency key reused")
+
 // ValidationError is a rejected request.
 type ValidationError struct{ Msg string }
 

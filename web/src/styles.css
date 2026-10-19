@@ -653,7 +653,32 @@ html.dark .tf {
 }
 html.dark .field { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
 .field:focus { box-shadow: inset 0 0 0 1.5px var(--accent); }
-.login-card .capsule { width: 100%; margin-top: 12px; height: 34px; }
+.login-card .capsule { width: 100%; margin-top: 12px; height: 34px; justify-content: center; }
+.login-card.enter { animation: rise 0.45s ease both; }
+@keyframes rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+.login-providers { display: flex; flex-direction: column; gap: 8px; }
+.user-menu { position: relative; }
+.user-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 220px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 20;
+  animation: rise 0.18s ease both;
+}
+.user-id { display: flex; flex-direction: column; gap: 2px; }
+.user-id span { color: var(--text-3); font-size: 12px; }
+.user-id .role { text-transform: capitalize; color: var(--text-2); }
 
 .grow { flex: 1; min-width: 0; }
 .fleet { gap: 18px; }

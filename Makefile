@@ -1,6 +1,6 @@
 BIN := bin
 
-.PHONY: build test test-race ui tidy fmt server tf-dev compose
+.PHONY: build test test-race ui tidy fmt server tf-dev compose demo smoke
 
 build:
 	mkdir -p $(BIN)
@@ -43,3 +43,9 @@ tf-dev: build
 
 compose:
 	docker compose up --build
+
+demo:
+	./scripts/demo.sh
+
+smoke:
+	./scripts/smoke.sh

@@ -70,6 +70,8 @@ func vulnWatermark(ctx context.Context, tx pgx.Tx) (string, error) {
 			UNION ALL
 			SELECT 'r7|' || device_id || '|' || cve_id || '|' || software_name || '|' || version FROM rapid7_findings
 			UNION ALL
+			SELECT 'munki|' || device_id || '|' || name || '|' || version FROM munki_installs
+			UNION ALL
 			SELECT 'ov|' || bundle_id || '|' || name || '|' || vendor || '|' || product || '|' || part FROM cpe_overrides
 			UNION ALL
 			SELECT 'cve|' || cve_id || '|' || source || '|' || kev::text || '|' || epss::text || '|' || updated_at::text FROM vuln_cves
@@ -232,6 +234,30 @@ func desiredFindings(ctx context.Context, tx pgx.Tx, overrides []vuln.Override, 
 		}
 	}
 	if err := devs.Err(); err != nil {
+		return nil, err
+	}
+	installs, err := tx.Query(ctx, `SELECT device_id, name, version FROM munki_installs`)
+	if err != nil {
+		return nil, err
+	}
+	defer installs.Close()
+	for installs.Next() {
+		var deviceID, name, version string
+		if err := installs.Scan(&deviceID, &name, &version); err != nil {
+			return nil, err
+		}
+		product, ok := vuln.MatchSoftware(name, "", overrides)
+		if !ok {
+			continue
+		}
+		for _, hit := range idx.MatchProduct(product.Vendor, product.Product, version, "", "") {
+			if !vuln.AffectedInstall(version, "", "", hit.Ranges, hit.Trains) {
+				continue
+			}
+			add(wantFinding{deviceID: deviceID, cve: hit.CVE, key: product.Key(), name: name, version: version, evidence: "munki"})
+		}
+	}
+	if err := installs.Err(); err != nil {
 		return nil, err
 	}
 	if !rapid7On {

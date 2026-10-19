@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 
 	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/munki"
@@ -890,16 +892,63 @@ func (s *Store) DeleteRunnerPool(ctx context.Context, p model.Principal, id stri
 
 func scanManifest(row pgx.Row) (model.Manifest, error) {
 	var m model.Manifest
-	err := row.Scan(&m.ID, &m.Name, &m.Catalogs, &m.IncludedManifests, &m.ManagedInstalls, &m.OptionalInstalls, &m.ManagedUninstalls, &m.ManagedBy, &m.CreatedAt, &m.UpdatedAt)
+	var raw []byte
+	err := row.Scan(&m.ID, &m.Name, &m.Catalogs, &m.IncludedManifests, &m.ManagedInstalls, &m.OptionalInstalls, &m.ManagedUninstalls, &raw, &m.ManagedBy, &m.CreatedAt, &m.UpdatedAt)
 	m.Catalogs = labelsOrEmpty(m.Catalogs)
 	m.IncludedManifests = labelsOrEmpty(m.IncludedManifests)
 	m.ManagedInstalls = labelsOrEmpty(m.ManagedInstalls)
 	m.OptionalInstalls = labelsOrEmpty(m.OptionalInstalls)
 	m.ManagedUninstalls = labelsOrEmpty(m.ManagedUninstalls)
+	m.ConditionalItems = []model.ConditionalItem{}
+	if len(raw) > 0 {
+		if uerr := json.Unmarshal(raw, &m.ConditionalItems); uerr != nil {
+			return m, uerr
+		}
+	}
+	if m.ConditionalItems == nil {
+		m.ConditionalItems = []model.ConditionalItem{}
+	}
+	for i := range m.ConditionalItems {
+		m.ConditionalItems[i].ManagedInstalls = labelsOrEmpty(m.ConditionalItems[i].ManagedInstalls)
+		m.ConditionalItems[i].OptionalInstalls = labelsOrEmpty(m.ConditionalItems[i].OptionalInstalls)
+		m.ConditionalItems[i].ManagedUninstalls = labelsOrEmpty(m.ConditionalItems[i].ManagedUninstalls)
+		m.ConditionalItems[i].IncludedManifests = labelsOrEmpty(m.ConditionalItems[i].IncludedManifests)
+	}
 	return m, err
 }
 
-const manifestCols = `id, name, catalogs, included_manifests, managed_installs, optional_installs, managed_uninstalls, managed_by, created_at, updated_at`
+const manifestCols = `id, name, catalogs, included_manifests, managed_installs, optional_installs, managed_uninstalls, conditional_items, managed_by, created_at, updated_at`
+
+func normalizeConditional(in []model.ConditionalItem) ([]model.ConditionalItem, error) {
+	if len(in) > 50 {
+		return nil, invalid("a manifest can have at most 50 conditional items")
+	}
+	if in == nil {
+		in = []model.ConditionalItem{}
+	}
+	out := make([]model.ConditionalItem, 0, len(in))
+	for _, c := range in {
+		c.Condition = trim(c.Condition)
+		if c.Condition == "" || len(c.Condition) > 500 || strings.ContainsAny(c.Condition, "\x00") {
+			return nil, invalid("conditional item condition is invalid")
+		}
+		var err error
+		if c.ManagedInstalls, err = validateStringList("managed_install", c.ManagedInstalls); err != nil {
+			return nil, err
+		}
+		if c.OptionalInstalls, err = validateStringList("optional_install", c.OptionalInstalls); err != nil {
+			return nil, err
+		}
+		if c.ManagedUninstalls, err = validateStringList("managed_uninstall", c.ManagedUninstalls); err != nil {
+			return nil, err
+		}
+		if c.IncludedManifests, err = validateStringList("included_manifest", c.IncludedManifests); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
 
 func validateStringList(field string, in []string) ([]string, error) {
 	if in == nil {
@@ -940,6 +989,13 @@ func (s *Store) CreateManifest(ctx context.Context, p model.Principal, in model.
 	if in.ManagedUninstalls, err = validateStringList("managed_uninstall", in.ManagedUninstalls); err != nil {
 		return model.Manifest{}, err
 	}
+	if in.ConditionalItems, err = normalizeConditional(in.ConditionalItems); err != nil {
+		return model.Manifest{}, err
+	}
+	rawItems, err := json.Marshal(in.ConditionalItems)
+	if err != nil {
+		return model.Manifest{}, err
+	}
 	now := s.now()
 	in.ID = newID()
 	in.ManagedBy = managedBy(in.ManagedBy)
@@ -949,9 +1005,9 @@ func (s *Store) CreateManifest(ctx context.Context, p model.Principal, in model.
 		return model.Manifest{}, err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO manifests (id, name, catalogs, included_manifests, managed_installs, optional_installs, managed_uninstalls, managed_by, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
-		in.ID, in.Name, in.Catalogs, in.IncludedManifests, in.ManagedInstalls, in.OptionalInstalls, in.ManagedUninstalls, in.ManagedBy, now)
+		INSERT INTO manifests (id, name, catalogs, included_manifests, managed_installs, optional_installs, managed_uninstalls, conditional_items, managed_by, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$10)`,
+		in.ID, in.Name, in.Catalogs, in.IncludedManifests, in.ManagedInstalls, in.OptionalInstalls, in.ManagedUninstalls, string(rawItems), in.ManagedBy, now)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return model.Manifest{}, mapWriteErr(err)
@@ -1026,6 +1082,13 @@ func (s *Store) UpdateManifest(ctx context.Context, p model.Principal, id string
 	if in.ManagedUninstalls, err = validateStringList("managed_uninstall", in.ManagedUninstalls); err != nil {
 		return model.Manifest{}, err
 	}
+	if in.ConditionalItems, err = normalizeConditional(in.ConditionalItems); err != nil {
+		return model.Manifest{}, err
+	}
+	rawItems, err := json.Marshal(in.ConditionalItems)
+	if err != nil {
+		return model.Manifest{}, err
+	}
 	now := s.now()
 	in.ID = id
 	in.ManagedBy = managedBy(in.ManagedBy)
@@ -1037,8 +1100,8 @@ func (s *Store) UpdateManifest(ctx context.Context, p model.Principal, id string
 	}
 	tag, err := tx.Exec(ctx, `
 		UPDATE manifests SET name=$2, catalogs=$3, included_manifests=$4, managed_installs=$5, optional_installs=$6,
-			managed_uninstalls=$7, managed_by=$8, updated_at=$9 WHERE id=$1`,
-		id, in.Name, in.Catalogs, in.IncludedManifests, in.ManagedInstalls, in.OptionalInstalls, in.ManagedUninstalls, in.ManagedBy, now)
+			managed_uninstalls=$7, conditional_items=$8::jsonb, managed_by=$9, updated_at=$10 WHERE id=$1`,
+		id, in.Name, in.Catalogs, in.IncludedManifests, in.ManagedInstalls, in.OptionalInstalls, in.ManagedUninstalls, string(rawItems), in.ManagedBy, now)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return model.Manifest{}, mapWriteErr(err)

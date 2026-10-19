@@ -246,15 +246,24 @@ func (c *Client) DeletePool(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/api/v1/runner-pools/"+id, nil, nil)
 }
 
-type manifestAPI struct {
-	ID                string   `json:"id,omitempty"`
-	Name              string   `json:"name"`
-	Catalogs          []string `json:"catalogs"`
-	IncludedManifests []string `json:"included_manifests"`
+type conditionalItemAPI struct {
+	Condition         string   `json:"condition"`
 	ManagedInstalls   []string `json:"managed_installs"`
 	OptionalInstalls  []string `json:"optional_installs"`
 	ManagedUninstalls []string `json:"managed_uninstalls"`
-	ManagedBy         string   `json:"managed_by,omitempty"`
+	IncludedManifests []string `json:"included_manifests"`
+}
+
+type manifestAPI struct {
+	ID                string               `json:"id,omitempty"`
+	Name              string               `json:"name"`
+	Catalogs          []string             `json:"catalogs"`
+	IncludedManifests []string             `json:"included_manifests"`
+	ManagedInstalls   []string             `json:"managed_installs"`
+	OptionalInstalls  []string             `json:"optional_installs"`
+	ManagedUninstalls []string             `json:"managed_uninstalls"`
+	ConditionalItems  []conditionalItemAPI `json:"conditional_items"`
+	ManagedBy         string               `json:"managed_by,omitempty"`
 }
 
 func (c *Client) CreateManifest(ctx context.Context, in manifestAPI) (manifestAPI, error) {

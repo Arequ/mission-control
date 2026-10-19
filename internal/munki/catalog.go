@@ -171,14 +171,62 @@ func stripCatalogMeta(m map[string]any) {
 	}
 }
 
-// ManifestPlist renders a Munki manifest.
+// Conditional is one conditional_items dictionary served to Munki.
+type Conditional struct {
+	Condition         string
+	ManagedInstalls   []string
+	OptionalInstalls  []string
+	ManagedUninstalls []string
+	IncludedManifests []string
+}
+
+// ManifestDoc is a manifest document, including included manifests and
+// conditional items. Munki fetches each included manifest itself.
+type ManifestDoc struct {
+	Catalogs          []string
+	IncludedManifests []string
+	ManagedInstalls   []string
+	OptionalInstalls  []string
+	ManagedUninstalls []string
+	ConditionalItems  []Conditional
+}
+
+// ManifestPlist renders a Munki manifest without conditional items.
 func ManifestPlist(catalogs, included, managed, optional, uninstalls []string) ([]byte, error) {
+	return RenderManifest(ManifestDoc{
+		Catalogs: catalogs, IncludedManifests: included, ManagedInstalls: managed,
+		OptionalInstalls: optional, ManagedUninstalls: uninstalls,
+	})
+}
+
+// RenderManifest renders a Munki manifest plist.
+func RenderManifest(doc ManifestDoc) ([]byte, error) {
 	dict := map[string]any{
-		"catalogs":           stringSlice(catalogs),
-		"included_manifests": stringSlice(included),
-		"managed_installs":   stringSlice(managed),
-		"optional_installs":  stringSlice(optional),
-		"managed_uninstalls": stringSlice(uninstalls),
+		"catalogs":           stringSlice(doc.Catalogs),
+		"included_manifests": stringSlice(doc.IncludedManifests),
+		"managed_installs":   stringSlice(doc.ManagedInstalls),
+		"optional_installs":  stringSlice(doc.OptionalInstalls),
+		"managed_uninstalls": stringSlice(doc.ManagedUninstalls),
+	}
+	if len(doc.ConditionalItems) > 0 {
+		items := make([]any, 0, len(doc.ConditionalItems))
+		for _, c := range doc.ConditionalItems {
+			item := map[string]any{"condition": c.Condition}
+			if len(c.ManagedInstalls) > 0 {
+				item["managed_installs"] = stringSlice(c.ManagedInstalls)
+			}
+			if len(c.OptionalInstalls) > 0 {
+				item["optional_installs"] = stringSlice(c.OptionalInstalls)
+			}
+			if len(c.ManagedUninstalls) > 0 {
+				item["managed_uninstalls"] = stringSlice(c.ManagedUninstalls)
+			}
+			if len(c.IncludedManifests) > 0 {
+				item["included_manifests"] = stringSlice(c.IncludedManifests)
+			}
+			items = append(items, item)
+		}
+		dict["conditional_items"] = items
 	}
 	return plist.MarshalIndent(dict, plist.XMLFormat, "\t")
 }

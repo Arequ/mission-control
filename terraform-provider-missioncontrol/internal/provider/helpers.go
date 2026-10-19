@@ -12,6 +12,13 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
+func errFromDiags(d diag.Diagnostics) error {
+	if !d.HasError() {
+		return nil
+	}
+	return fmt.Errorf("%s", d.Errors()[0].Summary())
+}
+
 func stringsFromList(ctx context.Context, list types.List) ([]string, diag.Diagnostics) {
 	if list.IsNull() || list.IsUnknown() {
 		return []string{}, nil

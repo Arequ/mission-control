@@ -15,6 +15,33 @@ services:
       timeout: 3s
       retries: 20
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.3
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+      cluster.routing.allocation.disk.threshold_enabled: "false"
+    ports:
+      - "9200:9200"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200/_cluster/health | grep -q '\"status\":\"green\"\\|\"status\":\"yellow\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+
+  dex:
+    image: dexidp/dex:v2.41.1
+    command: ["dex", "serve", "/etc/dex/config.yaml"]
+    volumes:
+      - ./deploy/dex/config.yaml:/etc/dex/config.yaml:ro
+    ports:
+      - "5556:5556"
+
   server:
     build: .
     environment:
@@ -27,14 +54,54 @@ services:
       MC_STORAGE_DRIVER: local
       MC_STORAGE_DIR: /data
       MC_WEB_DIR: /app/web/dist
-      MC_DEV_SEED: "1"
+      MC_DEV_SEED: "0"
       MC_OFFLINE_AFTER: 24h
+      MC_PUBLIC_URL: http://localhost:8080
+      MC_COOKIE_SECURE: "0"
+      MC_BREAK_GLASS: "0"
+      MC_TLS_ADDR: :8443
+      MC_TLS_CERT: /certs/server.crt
+      MC_TLS_KEY: /certs/server.key
     ports:
       - "8080:8080"
+      - "8443:8443"
     volumes:
       - pkgdata:/data
+      - ./.demo/tls:/certs:ro
     depends_on:
       postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  osquery:
+    image: osquery/osquery:5.14.1
+    hostname: mbp-eng-0217
+    entrypoint: ["osqueryd"]
+    command:
+      - --flagfile=/etc/osquery/osquery.flags
+      - --ephemeral
+    volumes:
+      - ./.demo/osquery/osquery.flags:/etc/osquery/osquery.flags:ro
+      - ./.demo/osquery/enroll.secret:/etc/osquery/enroll.secret:ro
+      - ./.demo/tls/server.crt:/etc/osquery/server.crt:ro
+    depends_on:
+      server:
+        condition: service_healthy
+
+  munki:
+    build:
+      context: ./deploy/munki-client
+    environment:
+      MC_URL: http://server:8080
+      MC_SERIAL: C02DEMO0001
+      MC_SECRET: example-munki-enrollment-secret
+      MC_HOSTNAME: ava-mbp.local
+    depends_on:
+      server:
         condition: service_healthy
 
   runner:

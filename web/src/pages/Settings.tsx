@@ -24,7 +24,7 @@ export function SettingsPage() {
           <div className="card-h"><span className="card-t">Session</span></div>
           <div className="pad">
             <div className="choice">
-              <span className="muted">API token stays in this browser tab.</span>
+              <span className="muted">This browser session signs out of Mission Control. SSO providers and Munki clients are Terraform-managed. The config repository should add access/sso.tf and munki/clients.tf before those propose links exist.</span>
               <SignOut />
             </div>
             <a className="api-link" href="/api/v1/openapi.yaml">OpenAPI specification</a>

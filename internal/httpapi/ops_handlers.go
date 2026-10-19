@@ -13,7 +13,6 @@ import (
 
 	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/munki"
-	"github.com/Arequ/mission-control/internal/storage"
 )
 
 func (s *Server) listRunners(w http.ResponseWriter, r *http.Request) {
@@ -397,73 +396,4 @@ func (s *Server) completeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, job)
-}
-
-func safeRepoSegment(name string) bool {
-	if name == "" || name == "." || strings.ContainsAny(name, "/\\\x00") || strings.Contains(name, "..") {
-		return false
-	}
-	return path.Clean(name) == name
-}
-
-func (s *Server) serveRepo(w http.ResponseWriter, r *http.Request) {
-	switch {
-	case strings.HasPrefix(r.URL.Path, "/repo/catalogs/"):
-		name := strings.TrimPrefix(r.URL.Path, "/repo/catalogs/")
-		name = strings.TrimSuffix(name, ".plist")
-		if !safeRepoSegment(name) {
-			writeJSON(w, http.StatusBadRequest, errBody{"invalid path"})
-			return
-		}
-		body, err := s.store.CatalogBody(r.Context(), name)
-		if err != nil {
-			s.writeStoreErr(w, err)
-			return
-		}
-		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		_, _ = w.Write(body)
-	case strings.HasPrefix(r.URL.Path, "/repo/manifests/"):
-		name := strings.TrimPrefix(r.URL.Path, "/repo/manifests/")
-		name = strings.TrimSuffix(name, ".plist")
-		if !safeRepoSegment(name) {
-			writeJSON(w, http.StatusBadRequest, errBody{"invalid path"})
-			return
-		}
-		m, err := s.store.GetManifestByName(r.Context(), name)
-		if err != nil {
-			s.writeStoreErr(w, err)
-			return
-		}
-		body, err := munki.ManifestPlist(m.Catalogs, m.IncludedManifests, m.ManagedInstalls, m.OptionalInstalls, m.ManagedUninstalls)
-		if err != nil {
-			s.writeStoreErr(w, err)
-			return
-		}
-		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-		w.Header().Set("Cache-Control", "no-cache")
-		_, _ = w.Write(body)
-	case strings.HasPrefix(r.URL.Path, "/repo/pkgs/"):
-		rel := strings.TrimPrefix(r.URL.Path, "/repo/pkgs/")
-		rel = strings.TrimPrefix(path.Clean("/"+rel), "/")
-		if strings.Contains(rel, "/") || storage.ValidateKey("pkgs/"+rel) != nil {
-			writeJSON(w, http.StatusBadRequest, errBody{"invalid path"})
-			return
-		}
-		rc, err := s.blobs.Open(r.Context(), "pkgs/"+rel)
-		if err != nil {
-			if err == storage.ErrNotFound {
-				writeJSON(w, http.StatusNotFound, errBody{"not found"})
-				return
-			}
-			s.log.Error("storage open", "err", err)
-			writeJSON(w, http.StatusInternalServerError, errBody{"storage read failed"})
-			return
-		}
-		defer rc.Close()
-		w.Header().Set("Content-Type", "application/octet-stream")
-		_, _ = io.Copy(w, rc)
-	default:
-		http.NotFound(w, r)
-	}
 }
