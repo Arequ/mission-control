@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: missioncontrol
+          POSTGRES_PASSWORD: missioncontrol
+          POSTGRES_DB: missioncontrol
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U missioncontrol -d missioncontrol"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      GOTOOLCHAIN: local
+      MC_DATABASE_URL: postgres://missioncontrol:missioncontrol@localhost:5432/missioncontrol?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - run: go test ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web

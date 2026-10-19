@@ -1,0 +1,44 @@
+# Local development only. The tokens and database password below are obvious
+# placeholders, not credentials for any shared environment.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: missioncontrol
+      POSTGRES_PASSWORD: missioncontrol
+      POSTGRES_DB: missioncontrol
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U missioncontrol -d missioncontrol"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  server:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MC_HTTP_ADDR: ":8080"
+      MC_DATABASE_URL: postgres://missioncontrol:missioncontrol@postgres:5432/missioncontrol?sslmode=disable
+      MC_BOOTSTRAP_TOKEN: dev-bootstrap-token
+      MC_ENROLL_SECRET: dev-enroll-secret
+      MC_CONFIG_DIR: /config
+      MC_CONFIG_SYNC_INTERVAL: 30s
+      MC_WEB_DIR: /app/web
+      MC_BLOB_DRIVER: local
+      MC_BLOB_DIR: /data/blobs
+      MC_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
+    volumes:
+      - ./examples/config:/config:ro
+      - blobs:/data/blobs
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
+  blobs:

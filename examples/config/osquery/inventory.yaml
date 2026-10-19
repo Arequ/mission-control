@@ -1,0 +1,35 @@
+apiVersion: missioncontrol.io/v1
+kind: OsqueryPack
+metadata:
+  name: macos-inventory
+  labels:
+    owner: mission-control
+spec:
+  description: Hardware, operating system, local users, and installed applications.
+  platform: darwin
+  queries:
+    - name: system_info
+      description: Hardware identity
+      query: >
+        SELECT hostname, computer_name, uuid, hardware_serial, hardware_model,
+        hardware_vendor, cpu_brand, cpu_physical_cores, physical_memory
+        FROM system_info;
+      interval: 3600
+      snapshot: true
+    - name: os_version
+      description: OS version and build
+      query: SELECT name, version, major, minor, build, platform FROM os_version;
+      interval: 3600
+      snapshot: true
+    - name: users
+      description: Local human accounts
+      query: >
+        SELECT uid, gid, username, description, directory, shell
+        FROM users WHERE uid >= 500 AND uid < 65532;
+      interval: 3600
+      snapshot: true
+    - name: apps
+      description: Applications visible to Launch Services
+      query: SELECT name, path, bundle_identifier, bundle_short_version FROM apps;
+      interval: 21600
+      snapshot: true

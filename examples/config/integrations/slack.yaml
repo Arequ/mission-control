@@ -1,0 +1,8 @@
+apiVersion: missioncontrol.io/v1
+kind: Integration
+metadata:
+  name: slack-ops
+spec:
+  type: slack
+  description: Notify operators when an AutoPkg promotion is ready. The URL stays out of git.
+  urlRef: env://SLACK_OPS_WEBHOOK

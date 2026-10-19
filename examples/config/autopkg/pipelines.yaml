@@ -1,0 +1,24 @@
+apiVersion: missioncontrol.io/v1
+kind: AutoPkgRepo
+metadata:
+  name: recipes
+spec:
+  description: Upstream AutoPkg recipes.
+  url: https://github.com/autopkg/recipes
+  branch: master
+---
+apiVersion: missioncontrol.io/v1
+kind: AutoPkgPipeline
+metadata:
+  name: google-chrome
+spec:
+  description: Build Chrome, import into testing, promote after the soak window.
+  repo: recipes
+  recipe: GoogleChrome.pkg.recipe
+  schedule: "0 6 * * *"
+  trust:
+    verify: true
+  promotion:
+    testingCatalog: testing
+    productionCatalog: production
+    soakHours: 72

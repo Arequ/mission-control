@@ -1,0 +1,9 @@
+.git
+bin
+data
+web/node_modules
+web/dist
+**/*_test.go
+*.md
+.env
+.env.*

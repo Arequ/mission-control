@@ -1,0 +1,19 @@
+apiVersion: missioncontrol.io/v1
+kind: Label
+metadata:
+  name: macbooks
+spec:
+  description: Apple laptops.
+  platform: darwin
+  interval: 300
+  query: SELECT 1 FROM system_info WHERE hardware_model LIKE 'MacBook%';
+---
+apiVersion: missioncontrol.io/v1
+kind: Label
+metadata:
+  name: sequoia
+spec:
+  description: macOS 15.
+  platform: darwin
+  interval: 3600
+  query: SELECT 1 FROM os_version WHERE major = '15';
