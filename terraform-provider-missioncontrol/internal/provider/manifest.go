@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -34,6 +35,7 @@ type manifestModel struct {
 	OptionalInstalls  types.List   `tfsdk:"optional_installs"`
 	ManagedUninstalls types.List   `tfsdk:"managed_uninstalls"`
 	ManagedBy         types.String `tfsdk:"managed_by"`
+	ConditionalItem   types.List   `tfsdk:"conditional_item"`
 }
 
 func listAttr(desc string) schema.ListAttribute {
@@ -56,6 +58,36 @@ func (r *manifestResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"managed_uninstalls": listAttr(""),
 			"managed_by":         schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
 		},
+		Blocks: map[string]schema.Block{
+			"conditional_item": schema.ListNestedBlock{
+				Description: "Munki conditional_items. Omitted when empty so a manifest without conditions does not drift.",
+				NestedObject: schema.NestedBlockObject{Attributes: map[string]schema.Attribute{
+					"condition":          schema.StringAttribute{Required: true},
+					"managed_installs":   listAttr("Installs applied when the condition is true."),
+					"optional_installs":  listAttr(""),
+					"managed_uninstalls": listAttr(""),
+					"included_manifests": listAttr(""),
+				}},
+			},
+		},
+	}
+}
+
+type conditionalItemModel struct {
+	Condition         types.String `tfsdk:"condition"`
+	ManagedInstalls   types.List   `tfsdk:"managed_installs"`
+	OptionalInstalls  types.List   `tfsdk:"optional_installs"`
+	ManagedUninstalls types.List   `tfsdk:"managed_uninstalls"`
+	IncludedManifests types.List   `tfsdk:"included_manifests"`
+}
+
+func conditionalItemTypes() map[string]attr.Type {
+	return map[string]attr.Type{
+		"condition":          types.StringType,
+		"managed_installs":   types.ListType{ElemType: types.StringType},
+		"optional_installs":  types.ListType{ElemType: types.StringType},
+		"managed_uninstalls": types.ListType{ElemType: types.StringType},
+		"included_manifests": types.ListType{ElemType: types.StringType},
 	}
 }
 
@@ -80,6 +112,25 @@ func (m manifestModel) api(ctx context.Context) (manifestAPI, diag.Diagnostics) 
 	if api.ManagedUninstalls, d = stringsFromList(ctx, m.ManagedUninstalls); d.HasError() {
 		diags.Append(d...)
 	}
+	items, d := conditionalModels(ctx, m.ConditionalItem)
+	diags.Append(d...)
+	api.ConditionalItems = make([]conditionalItemAPI, 0, len(items))
+	for _, item := range items {
+		row := conditionalItemAPI{Condition: item.Condition.ValueString()}
+		if row.ManagedInstalls, d = stringsFromList(ctx, item.ManagedInstalls); d.HasError() {
+			diags.Append(d...)
+		}
+		if row.OptionalInstalls, d = stringsFromList(ctx, item.OptionalInstalls); d.HasError() {
+			diags.Append(d...)
+		}
+		if row.ManagedUninstalls, d = stringsFromList(ctx, item.ManagedUninstalls); d.HasError() {
+			diags.Append(d...)
+		}
+		if row.IncludedManifests, d = stringsFromList(ctx, item.IncludedManifests); d.HasError() {
+			diags.Append(d...)
+		}
+		api.ConditionalItems = append(api.ConditionalItems, row)
+	}
 	return api, diags
 }
 
@@ -102,7 +153,49 @@ func modelManifest(ctx context.Context, in manifestAPI) (manifestModel, diag.Dia
 	if m.ManagedUninstalls, d = listOfStrings(ctx, in.ManagedUninstalls); d.HasError() {
 		diags.Append(d...)
 	}
+	if m.ConditionalItem, d = conditionalList(ctx, in.ConditionalItems); d.HasError() {
+		diags.Append(d...)
+	}
 	return m, diags
+}
+
+func conditionalModels(ctx context.Context, list types.List) ([]conditionalItemModel, diag.Diagnostics) {
+	if list.IsNull() || list.IsUnknown() {
+		return nil, nil
+	}
+	var items []conditionalItemModel
+	diags := list.ElementsAs(ctx, &items, false)
+	return items, diags
+}
+
+func conditionalList(ctx context.Context, in []conditionalItemAPI) (types.List, diag.Diagnostics) {
+	if len(in) == 0 {
+		return types.ListNull(types.ObjectType{AttrTypes: conditionalItemTypes()}), nil
+	}
+	objs := make([]attr.Value, 0, len(in))
+	var diags diag.Diagnostics
+	for _, item := range in {
+		managed, d := listOfStrings(ctx, item.ManagedInstalls)
+		diags.Append(d...)
+		optional, d := listOfStrings(ctx, item.OptionalInstalls)
+		diags.Append(d...)
+		uninstalls, d := listOfStrings(ctx, item.ManagedUninstalls)
+		diags.Append(d...)
+		included, d := listOfStrings(ctx, item.IncludedManifests)
+		diags.Append(d...)
+		obj, d := types.ObjectValue(conditionalItemTypes(), map[string]attr.Value{
+			"condition":          types.StringValue(item.Condition),
+			"managed_installs":   managed,
+			"optional_installs":  optional,
+			"managed_uninstalls": uninstalls,
+			"included_manifests": included,
+		})
+		diags.Append(d...)
+		objs = append(objs, obj)
+	}
+	list, d := types.ListValue(types.ObjectType{AttrTypes: conditionalItemTypes()}, objs)
+	diags.Append(d...)
+	return list, diags
 }
 
 func (r *manifestResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

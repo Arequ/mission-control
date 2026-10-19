@@ -57,6 +57,47 @@ resource "missioncontrol_manifest" "testing" {
   name             = "testing"
   catalogs         = ["testing", "production"]
   managed_installs = ["Firefox"]
+
+  conditional_item {
+    condition        = "arch == 'arm64'"
+    managed_installs = ["Firefox"]
+  }
+}
+
+resource "missioncontrol_munki_enrollment" "fleet" {
+  name     = "fleet"
+  secret   = var.munki_enrollment_secret
+  manifest = missioncontrol_manifest.site_default.name
+  enabled  = true
+}
+
+resource "missioncontrol_munki_client" "demo" {
+  serial        = "C02DEMO0001"
+  enrollment_id = missioncontrol_munki_enrollment.fleet.id
+  manifest      = missioncontrol_manifest.site_default.name
+  enabled       = true
+}
+
+resource "missioncontrol_sso_provider" "dex" {
+  name            = "dex"
+  issuer          = "http://dex:5556/dex"
+  client_id       = "mission-control"
+  client_secret   = var.oidc_client_secret
+  allowed_domains = ["example.com"]
+  group_claim     = "groups"
+  enabled         = true
+}
+
+resource "missioncontrol_role_binding" "engineering" {
+  provider_id = missioncontrol_sso_provider.dex.id
+  group       = "engineering"
+  role        = "admin"
+}
+
+resource "missioncontrol_role_binding" "everyone" {
+  provider_id = missioncontrol_sso_provider.dex.id
+  group       = "*"
+  role        = "viewer"
 }
 
 resource "missioncontrol_osquery_enroll_secret" "fleet" {
@@ -148,7 +189,7 @@ resource "missioncontrol_source_connector" "rapid7" {
   name                = "rapid7"
   source              = "rapid7"
   mode                = "elastic"
-  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_url         = var.elastic_url
   elastic_api_key     = var.elastic_api_key
   index_pattern       = "logs-rapid7.insight-*"
   query_language      = "kql"
@@ -163,7 +204,7 @@ resource "missioncontrol_source_connector" "netskope" {
   name                = "netskope"
   source              = "netskope"
   mode                = "elastic"
-  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_url         = var.elastic_url
   elastic_api_key     = var.elastic_api_key
   index_pattern       = "logs-netskope.events-*"
   query_language      = "kql"
@@ -178,7 +219,7 @@ resource "missioncontrol_source_connector" "proofpoint" {
   name                = "proofpoint"
   source              = "proofpoint"
   mode                = "elastic"
-  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_url         = var.elastic_url
   elastic_api_key     = var.elastic_api_key
   index_pattern       = "logs-proofpoint.endpoint-*"
   query_language      = "kql"
@@ -193,7 +234,7 @@ resource "missioncontrol_source_connector" "blastshield" {
   name                = "blastshield"
   source              = "blastshield"
   mode                = "elastic"
-  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_url         = var.elastic_url
   elastic_api_key     = var.elastic_api_key
   index_pattern       = "logs-blastshield.agent-*"
   query_language      = "kql"
@@ -269,7 +310,7 @@ resource "missioncontrol_log_view" "autopkg" {
   max_lines       = 5000
   device_scoped   = false
   time_zone       = "UTC"
-  elastic_url     = "https://elasticsearch.example.invalid"
+  elastic_url     = var.elastic_url
   elastic_api_key = var.elastic_api_key
 
   source {

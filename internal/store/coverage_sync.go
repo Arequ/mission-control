@@ -52,6 +52,11 @@ func (s *Store) syncConnector(ctx context.Context, c storedConnector) {
 		if err == nil {
 			count, err = s.countSnapshots(ctx, c.Source)
 		}
+	case c.Mode == "native" && c.Source == "munki":
+		err = s.ProjectMunki(ctx)
+		if err == nil {
+			count, err = s.countSnapshots(ctx, c.Source)
+		}
 	case c.Mode == "native":
 		count, err = s.countSnapshots(ctx, c.Source)
 	default:

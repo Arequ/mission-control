@@ -13,34 +13,43 @@ import (
 
 // Config is the server process configuration.
 type Config struct {
-	DatabaseURL       string
-	HTTPAddr          string
-	AdminToken        string
-	BootstrapToken    string
-	RepoToken         string
-	StorageDriver     string
-	StorageDir        string
-	S3Endpoint        string
-	S3Bucket          string
-	S3AccessKey       string
-	S3SecretKey       string
-	S3Region          string
-	S3UseSSL          bool
-	WebDir            string
-	ClockOffset       time.Duration
-	DevCORS           bool
-	DevSeed           bool
-	SchedulerInterval time.Duration
-	LogLevel          string
-	OfflineAfter      time.Duration
-	MaxUploadBytes    int64
-	InventoryInterval time.Duration
-	ElasticURL        string
-	ElasticIndex      string
-	ElasticAPIKey     string
-	LogRetention      time.Duration
-	ConfigRepo        string
-	ConfigBranch      string
+	DatabaseURL        string
+	HTTPAddr           string
+	AdminToken         string
+	BootstrapToken     string
+	RepoToken          string
+	StorageDriver      string
+	StorageDir         string
+	S3Endpoint         string
+	S3Bucket           string
+	S3AccessKey        string
+	S3SecretKey        string
+	S3Region           string
+	S3UseSSL           bool
+	WebDir             string
+	ClockOffset        time.Duration
+	DevCORS            bool
+	DevSeed            bool
+	SchedulerInterval  time.Duration
+	LogLevel           string
+	OfflineAfter       time.Duration
+	MaxUploadBytes     int64
+	InventoryInterval  time.Duration
+	ElasticURL         string
+	ElasticIndex       string
+	ElasticAPIKey      string
+	LogRetention       time.Duration
+	ConfigRepo         string
+	ConfigBranch       string
+	PublicURL          string
+	CookieSecure       bool
+	SessionIdle        time.Duration
+	SessionAbsolute    time.Duration
+	BreakGlass         bool
+	BreakGlassPassword string
+	TLSAddr            string
+	TLSCert            string
+	TLSKey             string
 }
 
 // Load reads configuration from the environment.
@@ -73,7 +82,16 @@ func Load() (Config, error) {
 		LogRetention:      720 * time.Hour,
 		ConfigRepo:        configrepo.DefaultSlug,
 		ConfigBranch:      configrepo.DefaultBranch,
+		CookieSecure:      getenvBool("MC_COOKIE_SECURE", true),
+		SessionIdle:       30 * time.Minute,
+		SessionAbsolute:   12 * time.Hour,
+		BreakGlass:        getenvBool("MC_BREAK_GLASS", false),
+		PublicURL:         strings.TrimRight(strings.TrimSpace(os.Getenv("MC_PUBLIC_URL")), "/"),
+		TLSAddr:           getenv("MC_TLS_ADDR", ":8443"),
+		TLSCert:           os.Getenv("MC_TLS_CERT"),
+		TLSKey:            os.Getenv("MC_TLS_KEY"),
 	}
+	cfg.BreakGlassPassword = os.Getenv("MC_BREAK_GLASS_PASSWORD")
 	repo, err := configrepo.Parse(getenv("MC_CONFIG_REPO", configrepo.DefaultSlug), getenv("MC_CONFIG_BRANCH", configrepo.DefaultBranch))
 	if err != nil {
 		return Config{}, err
@@ -118,6 +136,26 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("MC_INVENTORY_INTERVAL: %w", err)
 		}
 		cfg.InventoryInterval = d
+	}
+	if v := os.Getenv("MC_SESSION_IDLE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("MC_SESSION_IDLE: %w", err)
+		}
+		cfg.SessionIdle = d
+	}
+	if v := os.Getenv("MC_SESSION_ABSOLUTE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("MC_SESSION_ABSOLUTE: %w", err)
+		}
+		cfg.SessionAbsolute = d
+	}
+	if cfg.BreakGlass && strings.TrimSpace(cfg.BreakGlassPassword) == "" {
+		return Config{}, fmt.Errorf("MC_BREAK_GLASS_PASSWORD is required when MC_BREAK_GLASS is on")
+	}
+	if (cfg.TLSCert == "") != (cfg.TLSKey == "") {
+		return Config{}, fmt.Errorf("MC_TLS_CERT and MC_TLS_KEY must be set together")
 	}
 	if v := os.Getenv("MC_MAX_UPLOAD_BYTES"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)

@@ -116,10 +116,11 @@ type Manifest struct {
 	Name              string    `json:"name"`
 	Catalogs          []string  `json:"catalogs"`
 	IncludedManifests []string  `json:"included_manifests"`
-	ManagedInstalls   []string  `json:"managed_installs"`
-	OptionalInstalls  []string  `json:"optional_installs"`
-	ManagedUninstalls []string  `json:"managed_uninstalls"`
-	ManagedBy         string    `json:"managed_by"`
+	ManagedInstalls   []string          `json:"managed_installs"`
+	OptionalInstalls  []string          `json:"optional_installs"`
+	ManagedUninstalls []string          `json:"managed_uninstalls"`
+	ConditionalItems  []ConditionalItem `json:"conditional_items"`
+	ManagedBy         string            `json:"managed_by"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/Arequ/mission-control/internal/configrepo"
 	"github.com/Arequ/mission-control/internal/model"
+	"github.com/Arequ/mission-control/internal/munki"
 	"github.com/Arequ/mission-control/internal/osquery"
 	"github.com/Arequ/mission-control/internal/storage"
 	"github.com/Arequ/mission-control/internal/store"
@@ -22,34 +23,47 @@ type principalKey struct{}
 
 // Server is the Mission Control HTTP server.
 type Server struct {
-	store        *store.Store
-	blobs        storage.Storage
-	log          *slog.Logger
-	webDir       string
-	repoToken    string
-	devCORS      bool
-	offlineAfter time.Duration
-	maxUpload    int64
-	inventory    time.Duration
-	forward      osquery.Forwarder
-	logRetention time.Duration
-	configRepo   configrepo.Repo
+	store              *store.Store
+	blobs              storage.Storage
+	log                *slog.Logger
+	webDir             string
+	repoToken          string
+	devCORS            bool
+	offlineAfter       time.Duration
+	maxUpload          int64
+	inventory          time.Duration
+	forward            osquery.Forwarder
+	logRetention       time.Duration
+	configRepo         configrepo.Repo
+	publicURL          string
+	cookieSecure       bool
+	sessionIdle        time.Duration
+	sessionAbsolute    time.Duration
+	breakGlass         bool
+	breakGlassPassword string
+	loginFails         failWindow
 }
 
 // Options configures the server.
 type Options struct {
-	Store             *store.Store
-	Blobs             storage.Storage
-	Logger            *slog.Logger
-	WebDir            string
-	RepoToken         string
-	DevCORS           bool
-	OfflineAfter      time.Duration
-	MaxUpload         int64
-	InventoryInterval time.Duration
-	Forwarder         osquery.Forwarder
-	LogRetention      time.Duration
-	ConfigRepo        configrepo.Repo
+	Store              *store.Store
+	Blobs              storage.Storage
+	Logger             *slog.Logger
+	WebDir             string
+	RepoToken          string
+	DevCORS            bool
+	OfflineAfter       time.Duration
+	MaxUpload          int64
+	InventoryInterval  time.Duration
+	Forwarder          osquery.Forwarder
+	LogRetention       time.Duration
+	ConfigRepo         configrepo.Repo
+	PublicURL          string
+	CookieSecure       bool
+	SessionIdle        time.Duration
+	SessionAbsolute    time.Duration
+	BreakGlass         bool
+	BreakGlassPassword string
 }
 
 // New builds a server.
@@ -72,19 +86,31 @@ func New(opts Options) *Server {
 	if opts.ConfigRepo.Slug == "" {
 		opts.ConfigRepo = configrepo.Default()
 	}
+	if opts.SessionIdle <= 0 {
+		opts.SessionIdle = 30 * time.Minute
+	}
+	if opts.SessionAbsolute <= 0 {
+		opts.SessionAbsolute = 12 * time.Hour
+	}
 	return &Server{
-		store:        opts.Store,
-		blobs:        opts.Blobs,
-		log:          opts.Logger,
-		webDir:       opts.WebDir,
-		repoToken:    opts.RepoToken,
-		devCORS:      opts.DevCORS,
-		offlineAfter: opts.OfflineAfter,
-		maxUpload:    opts.MaxUpload,
-		inventory:    opts.InventoryInterval,
-		forward:      opts.Forwarder,
-		logRetention: opts.LogRetention,
-		configRepo:   opts.ConfigRepo,
+		store:              opts.Store,
+		blobs:              opts.Blobs,
+		log:                opts.Logger,
+		webDir:             opts.WebDir,
+		repoToken:          opts.RepoToken,
+		devCORS:            opts.DevCORS,
+		offlineAfter:       opts.OfflineAfter,
+		maxUpload:          opts.MaxUpload,
+		inventory:          opts.InventoryInterval,
+		forward:            opts.Forwarder,
+		logRetention:       opts.LogRetention,
+		configRepo:         opts.ConfigRepo,
+		publicURL:          strings.TrimRight(strings.TrimSpace(opts.PublicURL), "/"),
+		cookieSecure:       opts.CookieSecure,
+		sessionIdle:        opts.SessionIdle,
+		sessionAbsolute:    opts.SessionAbsolute,
+		breakGlass:         opts.BreakGlass,
+		breakGlassPassword: opts.BreakGlassPassword,
 	}
 }
 
@@ -115,6 +141,9 @@ func (s *Server) Tick(ctx context.Context) error {
 		if _, err := s.store.PurgeOsqueryLogs(ctx, s.logRetention); err != nil {
 			return err
 		}
+	}
+	if err := s.store.PurgeSessions(ctx); err != nil {
+		return err
 	}
 	return nil
 }
@@ -169,6 +198,35 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/runner-pools/{id}", s.withAPI("config:read", http.HandlerFunc(s.getPool)))
 	mux.Handle("PUT /api/v1/runner-pools/{id}", s.withConfigWrite(http.HandlerFunc(s.updatePool)))
 	mux.Handle("DELETE /api/v1/runner-pools/{id}", s.withConfigWrite(http.HandlerFunc(s.deletePool)))
+
+	mux.Handle("GET /api/v1/munki/enrollments", s.withAPI("config:read", http.HandlerFunc(s.listMunkiEnrollments)))
+	mux.Handle("POST /api/v1/munki/enrollments", s.withConfigWrite(http.HandlerFunc(s.createMunkiEnrollment)))
+	mux.Handle("GET /api/v1/munki/enrollments/{id}", s.withAPI("config:read", http.HandlerFunc(s.getMunkiEnrollment)))
+	mux.Handle("PUT /api/v1/munki/enrollments/{id}", s.withConfigWrite(http.HandlerFunc(s.updateMunkiEnrollment)))
+	mux.Handle("DELETE /api/v1/munki/enrollments/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteMunkiEnrollment)))
+	mux.Handle("GET /api/v1/munki/clients", s.withAPI("config:read", http.HandlerFunc(s.listMunkiClients)))
+	mux.Handle("POST /api/v1/munki/clients", s.withConfigWrite(http.HandlerFunc(s.createMunkiClient)))
+	mux.Handle("GET /api/v1/munki/clients/{id}", s.withAPI("config:read", http.HandlerFunc(s.getMunkiClient)))
+	mux.Handle("PUT /api/v1/munki/clients/{id}", s.withConfigWrite(http.HandlerFunc(s.updateMunkiClient)))
+	mux.Handle("DELETE /api/v1/munki/clients/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteMunkiClient)))
+
+	mux.HandleFunc("GET /api/v1/sso/providers", s.publicSSOProviders)
+	mux.HandleFunc("GET /api/v1/sso/login", s.ssoLogin)
+	mux.HandleFunc("GET /api/v1/sso/callback", s.ssoCallback)
+	mux.Handle("GET /api/v1/sso/config", s.withAPI("config:read", http.HandlerFunc(s.listSSOProviders)))
+	mux.Handle("POST /api/v1/sso/config", s.withConfigWrite(http.HandlerFunc(s.createSSOProvider)))
+	mux.Handle("GET /api/v1/sso/config/{id}", s.withAPI("config:read", http.HandlerFunc(s.getSSOProvider)))
+	mux.Handle("PUT /api/v1/sso/config/{id}", s.withConfigWrite(http.HandlerFunc(s.updateSSOProvider)))
+	mux.Handle("DELETE /api/v1/sso/config/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteSSOProvider)))
+	mux.Handle("GET /api/v1/sso/role-bindings", s.withAPI("config:read", http.HandlerFunc(s.listRoleBindings)))
+	mux.Handle("POST /api/v1/sso/role-bindings", s.withConfigWrite(http.HandlerFunc(s.createRoleBinding)))
+	mux.Handle("GET /api/v1/sso/role-bindings/{id}", s.withAPI("config:read", http.HandlerFunc(s.getRoleBinding)))
+	mux.Handle("PUT /api/v1/sso/role-bindings/{id}", s.withConfigWrite(http.HandlerFunc(s.updateRoleBinding)))
+	mux.Handle("DELETE /api/v1/sso/role-bindings/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteRoleBinding)))
+	mux.Handle("GET /api/v1/session", s.withAPI("", http.HandlerFunc(s.session)))
+	mux.Handle("POST /api/v1/session/logout", s.withAPI("", http.HandlerFunc(s.logout)))
+	mux.Handle("POST /api/v1/session/refresh", s.withAPI("", http.HandlerFunc(s.refreshSession)))
+	mux.HandleFunc("POST /api/v1/session/break-glass", s.breakGlassLogin)
 
 	mux.Handle("GET /api/v1/manifests", s.withAPI("config:read", http.HandlerFunc(s.listManifests)))
 	mux.Handle("POST /api/v1/manifests", s.withConfigWrite(http.HandlerFunc(s.createManifest)))
@@ -268,7 +326,10 @@ func (s *Server) Handler() http.Handler {
 	repo := s.withRepo(http.HandlerFunc(s.serveRepo))
 	mux.Handle("GET /repo/catalogs/{name}", repo)
 	mux.Handle("GET /repo/manifests/{name}", repo)
+	mux.Handle("GET /repo/pkgsinfo/{name}", repo)
+	mux.Handle("GET /repo/icons/{name}", repo)
 	mux.Handle("GET /repo/pkgs/{path...}", repo)
+	mux.Handle("POST /munki/checkin", s.withRepo(http.HandlerFunc(s.munkiCheckin)))
 
 	mux.HandleFunc("GET /{path...}", s.spa)
 
@@ -291,8 +352,9 @@ func (s *Server) wrap(next http.Handler) http.Handler {
 			if devOrigin(origin) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
-				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Mission-Control-Client")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Mission-Control-Client, X-CSRF-Token")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -371,6 +433,12 @@ func (s *Server) writeStoreErr(w http.ResponseWriter, err error) {
 		writeJSON(w, http.StatusConflict, errBody{err.Error()})
 	case errors.Is(err, store.ErrForbidden):
 		writeJSON(w, http.StatusForbidden, errBody{"forbidden"})
+	case errors.Is(err, store.ErrStaleReport):
+		writeJSON(w, http.StatusConflict, errBody{"stale report"})
+	case errors.Is(err, store.ErrIdempotencyReuse):
+		writeJSON(w, http.StatusConflict, errBody{"idempotency key reused"})
+	case errors.Is(err, munki.ErrLimits):
+		writeJSON(w, http.StatusRequestEntityTooLarge, errBody{"report exceeds limits"})
 	default:
 		s.log.Error("store", "err", err)
 		writeJSON(w, http.StatusInternalServerError, errBody{"internal error"})

@@ -79,6 +79,8 @@ export type ServerMeta = {
   config_repo: string;
   config_branch: string;
   config_links: Partial<Record<ConfigKind, string>>;
+  break_glass?: boolean;
+  sso_enabled?: boolean;
 };
 
 export const FALLBACK_META: ServerMeta = {
@@ -114,5 +116,12 @@ export function acceptMeta(body: unknown): ServerMeta | null {
     const safe = typeof value === "string" ? safeGitHubLink(value, ["edit", "tree"], rec.config_repo) : "";
     links[key] = safe || proposeHref(rec.config_repo, rec.config_branch, key);
   }
-  return { config_repo: rec.config_repo, config_branch: rec.config_branch, config_links: links };
+  const extra = body as { break_glass?: unknown; sso_enabled?: unknown };
+  return {
+    config_repo: rec.config_repo,
+    config_branch: rec.config_branch,
+    config_links: links,
+    break_glass: extra.break_glass === true,
+    sso_enabled: extra.sso_enabled === true,
+  };
 }
