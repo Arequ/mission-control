@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/vuln"
 	"github.com/jackc/pgx/v5"
 )
@@ -43,14 +44,14 @@ func (s *Store) CorrelateVulnerabilities(ctx context.Context, force bool) error 
 	if err != nil {
 		return err
 	}
-	want, err := desiredFindings(ctx, tx, ov, catalog, rapid7On)
+	want, err := desiredFindings(ctx, tx, ov, catalog, rapid7On, now)
 	if err != nil {
 		return err
 	}
 	if err := replaceFindings(ctx, tx, want, now); err != nil {
 		return err
 	}
-	if err := syncIssues(ctx, tx, want, now); err != nil {
+	if err := s.syncIssues(ctx, tx, want, now); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE vulnerability_settings SET inventory_watermark=$1 WHERE id='default'`, next); err != nil {
@@ -73,7 +74,7 @@ func vulnWatermark(ctx context.Context, tx pgx.Tx) (string, error) {
 			UNION ALL
 			SELECT 'cve|' || cve_id || '|' || source || '|' || kev::text || '|' || epss::text || '|' || updated_at::text FROM vuln_cves
 			UNION ALL
-			SELECT 'rg|' || cve_id || '|' || vendor || '|' || product || '|' || end_excl || '|' || end_incl || '|' || exact FROM vuln_ranges
+			SELECT 'rg|' || cve_id || '|' || vendor || '|' || product || '|' || end_excl || '|' || end_incl || '|' || exact || '|' || platform FROM vuln_ranges
 			UNION ALL
 			SELECT 'tr|' || cve_id || '|' || product || '|' || major::text || '|' || fixed_version || '|' || fixed_build || '|' || train_mode FROM vuln_trains
 			UNION ALL
@@ -94,17 +95,18 @@ type rowQuery interface {
 func loadVulnRules(ctx context.Context, q rowQuery) (vulnRules, error) {
 	out := vulnRules{ranges: map[string][]vuln.ProductBound{}, trains: map[string][]vuln.Train{}}
 	rows, err := q.Query(ctx, `
-		SELECT cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact FROM vuln_ranges`)
+		SELECT cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, platform FROM vuln_ranges`)
 	if err != nil {
 		return out, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id string
+		var id, platform string
 		var b vuln.ProductBound
-		if err := rows.Scan(&id, &b.Part, &b.Vendor, &b.Product, &b.Bound.StartIncl, &b.Bound.StartExcl, &b.Bound.EndIncl, &b.Bound.EndExcl, &b.Bound.Exact); err != nil {
+		if err := rows.Scan(&id, &b.Part, &b.Vendor, &b.Product, &b.Bound.StartIncl, &b.Bound.StartExcl, &b.Bound.EndIncl, &b.Bound.EndExcl, &b.Bound.Exact, &platform); err != nil {
 			return out, err
 		}
+		b.Platforms = vuln.DecodePlatforms(platform)
 		out.ranges[id] = append(out.ranges[id], b)
 	}
 	if err := rows.Err(); err != nil {
@@ -131,7 +133,7 @@ type wantFinding struct {
 	deviceID, cve, key, name, version, build, evidence string
 }
 
-func desiredFindings(ctx context.Context, tx pgx.Tx, overrides []vuln.Override, rules vulnRules, rapid7On bool) (map[string]wantFinding, error) {
+func desiredFindings(ctx context.Context, tx pgx.Tx, overrides []vuln.Override, rules vulnRules, rapid7On bool, now time.Time) (map[string]wantFinding, error) {
 	want := map[string]wantFinding{}
 	add := func(f wantFinding) {
 		if f.deviceID == "" || f.cve == "" || f.key == "" {
@@ -161,33 +163,54 @@ func desiredFindings(ctx context.Context, tx pgx.Tx, overrides []vuln.Override, 
 	for id := range rules.trains {
 		cves[id] = true
 	}
-	apps, err := tx.Query(ctx, `SELECT device_id, name, bundle_id, version, bundle_version FROM device_apps`)
+	idx := vuln.NewIndex(rules.ranges, rules.trains)
+	stale, err := staleAppDevices(ctx, tx, now)
+	if err != nil {
+		return nil, err
+	}
+	apps, err := tx.Query(ctx, `
+		SELECT a.device_id, a.name, a.bundle_id, a.version, a.bundle_version, COALESCE(d.os_version, '')
+		FROM device_apps a
+		LEFT JOIN devices d ON d.id = a.device_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer apps.Close()
+	present := map[string]bool{}
 	for apps.Next() {
-		var deviceID, name, bundle, version, bundleVersion string
-		if err := apps.Scan(&deviceID, &name, &bundle, &version, &bundleVersion); err != nil {
+		var deviceID, name, bundle, version, bundleVersion, osVersion string
+		if err := apps.Scan(&deviceID, &name, &bundle, &version, &bundleVersion, &osVersion); err != nil {
 			return nil, err
 		}
 		product, ok := vuln.MatchSoftware(name, bundle, overrides)
 		if !ok {
 			continue
 		}
-		for id := range cves {
-			rs, ts := rulesFor(rules, id, product)
-			if len(rs) == 0 && len(ts) == 0 {
-				continue
+		present[deviceID+"\x00"+product.Key()] = true
+		consider := func(probe string) {
+			if probe == "" {
+				return
 			}
-			ver, comparable := vuln.ChooseVersion(version, bundleVersion, boundHints(rs, ts))
-			if !comparable || !vuln.AffectedInstall(ver, "", rs, ts) {
-				continue
+			for _, hit := range idx.MatchProduct(product.Vendor, product.Product, probe, "", osVersion) {
+				ver, comparable := vuln.ChooseVersion(version, bundleVersion, product.VersionSource, boundHints(hit.Ranges, hit.Trains))
+				if !comparable || !vuln.AffectedInstall(ver, "", osVersion, hit.Ranges, hit.Trains) {
+					continue
+				}
+				add(wantFinding{deviceID: deviceID, cve: hit.CVE, key: product.Key(), name: name, version: ver, evidence: "inventory"})
 			}
-			add(wantFinding{deviceID: deviceID, cve: id, key: product.Key(), name: name, version: ver, evidence: "inventory"})
+		}
+		consider(version)
+		if strings.EqualFold(product.VersionSource, "bundle") && bundleVersion != "" && bundleVersion != version {
+			consider(bundleVersion)
+		}
+		if version == "" && bundleVersion != "" {
+			consider(bundleVersion)
 		}
 	}
 	if err := apps.Err(); err != nil {
+		return nil, err
+	}
+	if err := carryStaleFindings(ctx, tx, stale, present, add); err != nil {
 		return nil, err
 	}
 	devs, err := tx.Query(ctx, `SELECT id, os_version, os_build FROM devices`)
@@ -201,12 +224,11 @@ func desiredFindings(ctx context.Context, tx pgx.Tx, overrides []vuln.Override, 
 		if err := devs.Scan(&id, &version, &build); err != nil {
 			return nil, err
 		}
-		for cve := range cves {
-			_, ts := rulesFor(rules, cve, osProduct)
-			if len(ts) == 0 || !vuln.AffectedInstall(version, build, nil, ts) {
+		for _, hit := range idx.MatchProduct(osProduct.Vendor, osProduct.Product, version, build, version) {
+			if !vuln.AffectedInstall(version, build, version, hit.Ranges, hit.Trains) {
 				continue
 			}
-			add(wantFinding{deviceID: id, cve: cve, key: osProduct.Key(), name: "macOS", version: version, build: build, evidence: "inventory"})
+			add(wantFinding{deviceID: id, cve: hit.CVE, key: osProduct.Key(), name: "macOS", version: version, build: build, evidence: "inventory"})
 		}
 	}
 	if err := devs.Err(); err != nil {
@@ -247,16 +269,98 @@ func rulesFor(rules vulnRules, cve string, product vuln.Product) ([]vuln.Product
 			trains = append(trains, t)
 		}
 	}
-	if vuln.AppleOS(product.Vendor, product.Product) || len(trains) > 0 {
+	// A train names the fix for this product. NVD ranges for the same CVE are
+	// ignored, including cross-train macOS ranges. When no train exists, a
+	// same-major macOS range is applied by AffectedInstall.
+	if len(trains) > 0 {
 		return nil, trains
 	}
 	var ranges []vuln.ProductBound
 	for _, r := range rules.ranges[cve] {
-		if r.Vendor == product.Vendor && r.Product == product.Product && !vuln.AppleOS(r.Vendor, r.Product) {
+		if r.Vendor == product.Vendor && r.Product == product.Product {
 			ranges = append(ranges, r)
 		}
 	}
 	return ranges, nil
+}
+
+// staleAppDevices reports devices whose mc_apps inventory is older than the
+// osquery stale window. A missing timestamp is fresh: a device row inserted
+// without a check-in still reflects the apps stored beside it. The window
+// comes from the osquery source connector, or 24 hours when that connector
+// is not configured.
+func staleAppDevices(ctx context.Context, tx pgx.Tx, now time.Time) (map[string]bool, error) {
+	var seconds int
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE((SELECT stale_after_seconds FROM source_connectors WHERE source='osquery' LIMIT 1), 86400)`).Scan(&seconds); err != nil {
+		return nil, err
+	}
+	if seconds < 60 {
+		seconds = 86400
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT d.id,
+			COALESCE(
+				(SELECT r.updated_at FROM device_query_results r WHERE r.device_id = d.id AND r.query_name = 'mc_apps'),
+				d.last_seen_at
+			)
+		FROM devices d`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	window := time.Duration(seconds) * time.Second
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		var seen *time.Time
+		if err := rows.Scan(&id, &seen); err != nil {
+			return nil, err
+		}
+		if seen == nil {
+			continue
+		}
+		if now.Sub(seen.UTC()) > window {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
+}
+
+// carryStaleFindings keeps the previous active app findings for a device whose
+// inventory is stale when that product is no longer in device_apps. A Mac that
+// stopped reporting must not close an issue. A fresh inventory that dropped
+// the app is a real uninstall.
+func carryStaleFindings(ctx context.Context, tx pgx.Tx, stale, present map[string]bool, add func(wantFinding)) error {
+	if len(stale) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(stale))
+	for id := range stale {
+		ids = append(ids, id)
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT device_id, cve_id, software_key, software_name, installed_version, installed_build, evidence
+		FROM vuln_findings
+		WHERE active AND software_key NOT LIKE 'o:%' AND device_id = ANY($1::text[])`, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var f wantFinding
+		if err := rows.Scan(&f.deviceID, &f.cve, &f.key, &f.name, &f.version, &f.build, &f.evidence); err != nil {
+			return err
+		}
+		if present[f.deviceID+"\x00"+f.key] {
+			continue
+		}
+		if f.evidence == "" {
+			f.evidence = "inventory"
+		}
+		add(f)
+	}
+	return rows.Err()
 }
 
 func soleProduct(rules vulnRules, cve string) (vuln.Product, bool) {
@@ -364,7 +468,7 @@ type issueGroup struct {
 	n              int
 }
 
-func syncIssues(ctx context.Context, tx pgx.Tx, want map[string]wantFinding, now time.Time) error {
+func (s *Store) syncIssues(ctx context.Context, tx pgx.Tx, want map[string]wantFinding, now time.Time) error {
 	groups := map[string]*issueGroup{}
 	for _, f := range want {
 		k := f.cve + "\x00" + f.key
@@ -420,7 +524,7 @@ func syncIssues(ctx context.Context, tx pgx.Tx, want map[string]wantFinding, now
 		if action == "" {
 			continue
 		}
-		if err := applyIssueTransition(ctx, tx, cur, next, action, g.n, now); err != nil {
+		if err := s.applyIssueTransition(ctx, tx, cur, next, action, g.n, now); err != nil {
 			return err
 		}
 	}
@@ -432,7 +536,7 @@ func syncIssues(ctx context.Context, tx pgx.Tx, want map[string]wantFinding, now
 		if action == "" {
 			continue
 		}
-		if err := applyIssueTransition(ctx, tx, cur, next, action, 0, now); err != nil {
+		if err := s.applyIssueTransition(ctx, tx, cur, next, action, 0, now); err != nil {
 			return err
 		}
 	}
@@ -466,9 +570,10 @@ type lockedIssue struct {
 	revision             int
 }
 
-func applyIssueTransition(ctx context.Context, tx pgx.Tx, cur lockedIssue, next, action string, devices int, now time.Time) error {
+func (s *Store) applyIssueTransition(ctx context.Context, tx pgx.Tx, cur lockedIssue, next, action string, devices int, now time.Time) error {
 	// Only the transition into fixed is automatic. A later regression clears the flag.
 	auto := next == "fixed" && cur.status != "fixed"
+	reopen := action == "reopened"
 	var resolved any
 	var risk any
 	if next == "fixed" {
@@ -477,13 +582,24 @@ func applyIssueTransition(ctx context.Context, tx pgx.Tx, cur lockedIssue, next,
 	} else if next == "risk_accepted" {
 		risk = cur.risk
 	}
-	if _, err := tx.Exec(ctx, `
+	// revision matches the row we locked. A user update that committed first
+	// changes the revision and this statement touches nothing.
+	tag, err := tx.Exec(ctx, `
 		UPDATE vuln_issues
-		SET status=$2, updated_at=$3, resolved_at=$4, auto_resolved=$5, risk_until=$6, revision=revision+1
-		WHERE id=$1`, cur.id, next, now, resolved, auto, risk); err != nil {
+		SET status=$2, updated_at=$3, resolved_at=$4, auto_resolved=$5, risk_until=$6,
+			opened_at=CASE WHEN $8 THEN $3 ELSE opened_at END,
+			revision=revision+1
+		WHERE id=$1 AND revision=$7`, cur.id, next, now, resolved, auto, risk, cur.revision, reopen)
+	if err != nil {
 		return err
 	}
-	return insertIssueEvent(ctx, tx, cur.id, now, "scheduler", action, map[string]any{"from": cur.status, "to": next, "devices": devices})
+	if tag.RowsAffected() == 0 {
+		return nil
+	}
+	if err := insertIssueEvent(ctx, tx, cur.id, now, "scheduler", action, map[string]any{"from": cur.status, "to": next, "devices": devices}); err != nil {
+		return err
+	}
+	return s.audit(ctx, tx, model.System, action, "vulnerability_issue", cur.id, map[string]any{"from": cur.status, "to": next, "devices": devices})
 }
 
 func insertIssueEvent(ctx context.Context, tx pgx.Tx, issueID string, at time.Time, actor, action string, detail map[string]any) error {

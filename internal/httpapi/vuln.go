@@ -86,6 +86,10 @@ func (s *Server) addVulnerabilityNote(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runVulnerabilityRecipe(w http.ResponseWriter, r *http.Request) {
+	if !principal(r).Allows("jobs:write") {
+		writeJSON(w, http.StatusForbidden, errBody{"forbidden"})
+		return
+	}
 	job, err := s.store.RunVulnerabilityRecipe(r.Context(), principal(r), r.PathValue("id"))
 	if err != nil {
 		s.writeStoreErr(w, err)

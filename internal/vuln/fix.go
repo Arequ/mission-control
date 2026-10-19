@@ -148,10 +148,16 @@ func PullRequestURL(title, body string) string {
 	return "https://github.com/" + ConfigRepo + "/compare?" + v.Encode()
 }
 
+// Applies reports whether any stored range matches version on a Mac running osVersion.
+// It is the platform-aware check used before an issue is opened.
+func Applies(ranges []ProductBound, version, osVersion string) bool {
+	return AffectedInstall(version, "", osVersion, ranges, nil)
+}
+
 // AffectedInstall reports whether a copy is inside this CVE's ranges or trains.
 // Trains win when any exist, so an NVD range cannot false-positive a backported
 // product or a macOS train the range does not understand.
-func AffectedInstall(version, build string, ranges []ProductBound, trains []Train) bool {
+func AffectedInstall(version, build, osVersion string, ranges []ProductBound, trains []Train) bool {
 	if strings.TrimSpace(version) == "" {
 		return false
 	}
@@ -160,7 +166,13 @@ func AffectedInstall(version, build string, ranges []ProductBound, trains []Trai
 		return hit
 	}
 	for _, r := range ranges {
-		if AppleOS(r.Vendor, r.Product) {
+		if !platformOK(r.Platforms, osVersion) {
+			continue
+		}
+		if AppleOS(r.Vendor, r.Product) && !sameMajorBound(r.Bound, version) {
+			// An NVD macOS range that crosses trains (14.x through 15.x) is not
+			// a single fix. Same-major bounds are applied when no SOFA train
+			// names this CVE.
 			continue
 		}
 		hit, _ := r.Bound.Affected(version)
@@ -169,6 +181,27 @@ func AffectedInstall(version, build string, ranges []ProductBound, trains []Trai
 		}
 	}
 	return false
+}
+
+// sameMajorBound reports whether every version in the bound is on the same
+// macOS major as installed. A bound with no version is not a train.
+func sameMajorBound(b Bound, installed string) bool {
+	major, ok := Major(installed)
+	if !ok {
+		return false
+	}
+	n := 0
+	for _, s := range []string{b.StartIncl, b.StartExcl, b.EndIncl, b.EndExcl, b.Exact} {
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+		m, mok := Major(s)
+		if !mok || m != major {
+			return false
+		}
+		n++
+	}
+	return n > 0
 }
 
 func clearsAll(pkg string, in DecideInput) bool {

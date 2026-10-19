@@ -30,7 +30,7 @@ func TestSyncNVDPagesDoNotSkipAndMergeProducts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Done || first.Cursor != "backfill|0|1" || len(first.CVEs) != 1 {
+	if first.Done || first.Cursor != "backfill|0|1|2" || len(first.CVEs) != 1 {
 		t.Fatalf("first page %+v", first)
 	}
 	second, err := SyncNVD(context.Background(), products, first.Cursor, now, 1, 1, fetch)
@@ -82,7 +82,7 @@ func TestSyncNVDStallDoesNotAdvance(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no rows") {
 		t.Fatalf("err %v", err)
 	}
-	if got.Cursor != "backfill|0|2" {
+	if got.Cursor != "backfill|0|2|5" {
 		t.Fatalf("cursor moved past a stall: %s", got.Cursor)
 	}
 }

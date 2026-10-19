@@ -78,7 +78,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	st.SetVulnerabilityFeeds(vuln.Feeds{HTTP: &http.Client{Timeout: 20 * time.Second}})
+	st.SetVulnerabilityFeeds(vuln.Feeds{HTTP: vuln.SafeFeedClient()})
 
 	var sink osquery.Forwarder = osquery.NopForwarder{}
 	if cfg.ElasticURL != "" {

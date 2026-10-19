@@ -55,10 +55,10 @@ func (s *Store) insertFixture(ctx context.Context, rec vuln.Record, now time.Tim
 	}
 	for _, r := range rec.Ranges {
 		if _, err := s.pool.Exec(ctx, `
-			INSERT INTO vuln_ranges (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, source)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'fixture')
-			ON CONFLICT (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact) DO NOTHING`,
-			rec.ID, r.Part, r.Vendor, r.Product, r.Bound.StartIncl, r.Bound.StartExcl, r.Bound.EndIncl, r.Bound.EndExcl, r.Bound.Exact); err != nil {
+			INSERT INTO vuln_ranges (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, platform, source)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'fixture')
+			ON CONFLICT (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, platform) DO NOTHING`,
+			rec.ID, r.Part, r.Vendor, r.Product, r.Bound.StartIncl, r.Bound.StartExcl, r.Bound.EndIncl, r.Bound.EndExcl, r.Bound.Exact, vuln.EncodePlatforms(r.Platforms)); err != nil {
 			return err
 		}
 	}

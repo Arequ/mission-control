@@ -20,6 +20,10 @@ func TestParseKEVAndEPSS(t *testing.T) {
 	if err != nil || len(epss) != 1 || epss[0].Score != 0.42 || epss[0].Percentile != 0.97 {
 		t.Fatalf("%v %+v", err, epss)
 	}
+	numeric, err := ParseEPSS([]byte(`{"data":[{"cve":"CVE-2024-7971","epss":0.42,"percentile":0.97},{"cve":"CVE-2024-11110","epss":"nope","percentile":"0"}]}`))
+	if err != nil || len(numeric) != 1 || numeric[0].Score != 0.42 {
+		t.Fatalf("numeric epss %v %+v", err, numeric)
+	}
 	q, err := EPSSQuery("https://api.first.org/data/v1/epss", []string{"CVE-2024-7971", "nope"})
 	if err != nil || !strings.Contains(q, "CVE-2024-7971") || strings.Contains(q, "nope") {
 		t.Fatal(q, err)
@@ -123,19 +127,38 @@ func TestFixtureFirefoxAndMacOSTrains(t *testing.T) {
 			mac = rec
 		}
 	}
-	if AffectedInstall("128.3.1", "", nil, firefox.Trains) || !AffectedInstall("128.3.0", "", nil, firefox.Trains) {
+	if AffectedInstall("128.3.1", "", "", nil, firefox.Trains) || !AffectedInstall("128.3.0", "", "", nil, firefox.Trains) {
 		t.Fatal("patched ESR")
 	}
-	if !AffectedInstall("131.0.1", "", nil, firefox.Trains) || AffectedInstall("132.0.2", "", nil, firefox.Trains) || !AffectedInstall("130.0", "", nil, firefox.Trains) {
+	if !AffectedInstall("131.0.1", "", "", nil, firefox.Trains) || AffectedInstall("132.0.2", "", "", nil, firefox.Trains) || !AffectedInstall("130.0", "", "", nil, firefox.Trains) {
 		t.Fatal("firefox trains")
 	}
-	if AffectedInstall("14.8", "23J20", nil, mac.Trains) || AffectedInstall("26.1", "25B78", nil, mac.Trains) {
+	if AffectedInstall("14.8", "23J20", "14.8", nil, mac.Trains) || AffectedInstall("26.1", "25B78", "26.1", nil, mac.Trains) {
 		t.Fatal("other macOS trains flagged")
 	}
-	if !AffectedInstall("15.1", "24B83", nil, mac.Trains) || AffectedInstall("15.1.1", "24B91", nil, mac.Trains) {
+	if !AffectedInstall("15.1", "24B83", "15.1", nil, mac.Trains) || AffectedInstall("15.1.1", "24B91", "15.1.1", nil, mac.Trains) {
 		t.Fatal("sequoia bound")
 	}
-	if !AffectedInstall("15.1.1", "24B83", nil, mac.Trains) {
+	if !AffectedInstall("15.1.1", "24B83", "15.1.1", nil, mac.Trains) {
 		t.Fatal("same version, older build, should still match")
+	}
+}
+
+func TestFeedURLRejectsMetadata(t *testing.T) {
+	for _, raw := range []string{
+		"http://169.254.169.254/latest/meta-data",
+		"http://metadata.google.internal/computeMetadata/v1/",
+		"http://user:pass@127.0.0.1/feed",
+		"file:///etc/passwd",
+	} {
+		if err := ValidateFeedURL(raw); err == nil {
+			t.Fatalf("accepted %s", raw)
+		}
+	}
+	if err := ValidateFeedURL("http://127.0.0.1:9/v1/findings"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FetchRapid7(context.Background(), nil, Rapid7Source{Mode: "api", BaseURL: "http://169.254.169.254"}); err == nil {
+		t.Fatal("rapid7 fetched a link-local address")
 	}
 }

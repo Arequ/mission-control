@@ -30,10 +30,21 @@ type Record struct {
 	Source      string
 }
 
+// Platform is an OS CPE that qualifies a configuration. An empty list on a
+// ProductBound means the configuration did not name an operating system.
+type Platform struct {
+	Vendor  string
+	Product string
+	Bound   Bound
+	Negate  bool
+}
+
 // ProductBound is a version interval for one CPE product.
 type ProductBound struct {
 	Part, Vendor, Product string
 	Bound                 Bound
+	// Platforms are OR'd. One stored row carries one alternative.
+	Platforms []Platform
 }
 
 // NVDQuery is one page of the CVE API 2.0.
@@ -104,7 +115,7 @@ func SyncNVD(ctx context.Context, products []Product, cursor string, now time.Ti
 	if len(products) == 0 {
 		return SyncResult{Cursor: cursor, Done: true}, nil
 	}
-	mode, modStart, idx, start := parseNVDCursor(cursor)
+	mode, modStart, idx, start, seenTotal := parseNVDCursor(cursor)
 	if idx < 0 || idx >= len(products) {
 		idx, start = 0, 0
 	}
@@ -132,28 +143,42 @@ func SyncNVD(ctx context.Context, products []Product, cursor string, now time.Ti
 			page, err := fetch(ctx, NVDQuery{Part: p.Part, Vendor: p.Vendor, Product: p.Product, Start: start, PerPage: pageSize})
 			out.Calls++
 			if err != nil {
-				out.Cursor = formatBackfill(idx, start)
+				out.Cursor = formatBackfill(idx, start, seenTotal)
 				return out, err
+			}
+			shrunk := page.Total >= 0 && page.Total < start
+			changed := seenTotal >= 0 && page.Total >= 0 && page.Total != seenTotal
+			if start > 0 && (shrunk || changed) {
+				// totalResults moved while we were paging. Restart this product
+				// so a shrink cannot skip the rows that slid into earlier indexes.
+				start = 0
+				seenTotal = page.Total
+				out.Cursor = formatBackfill(idx, 0, seenTotal)
+				continue
+			}
+			if page.Total >= 0 {
+				seenTotal = page.Total
 			}
 			appendPage(page)
 			next, done, stall := advance(start, len(page.CVEs), page.Total)
 			if stall {
-				out.Cursor = formatBackfill(idx, start)
+				out.Cursor = formatBackfill(idx, start, seenTotal)
 				return out, fmt.Errorf("nvd page at %d returned no rows before total %d", start, page.Total)
 			}
 			if !done {
 				start = next
-				out.Cursor = formatBackfill(idx, start)
+				out.Cursor = formatBackfill(idx, start, seenTotal)
 				continue
 			}
 			idx++
 			start = 0
+			seenTotal = -1
 			if idx >= len(products) {
 				out.Cursor = formatMod(now, -1, 0)
 				out.Done = true
 				return out, nil
 			}
-			out.Cursor = formatBackfill(idx, 0)
+			out.Cursor = formatBackfill(idx, 0, -1)
 			continue
 		}
 		if !modStart.Before(now) {
@@ -221,26 +246,30 @@ func advance(start, n, total int) (next int, done bool, stall bool) {
 	return next, false, false
 }
 
-func parseNVDCursor(c string) (mode string, modStart time.Time, idx, start int) {
+func parseNVDCursor(c string) (mode string, modStart time.Time, idx, start, total int) {
+	total = -1
 	c = strings.TrimSpace(c)
 	if c == "" {
-		return "backfill", time.Time{}, 0, 0
+		return "backfill", time.Time{}, 0, 0, -1
 	}
 	parts := strings.Split(c, "|")
 	switch parts[0] {
 	case "backfill":
-		if len(parts) == 3 {
+		if len(parts) >= 3 {
 			idx, _ = strconv.Atoi(parts[1])
 			start, _ = strconv.Atoi(parts[2])
 		}
-		return "backfill", time.Time{}, idx, start
+		if len(parts) >= 4 {
+			total, _ = strconv.Atoi(parts[3])
+		}
+		return "backfill", time.Time{}, idx, start, total
 	case "mod":
 		if len(parts) < 2 {
-			return "backfill", time.Time{}, 0, 0
+			return "backfill", time.Time{}, 0, 0, -1
 		}
 		t, err := time.Parse(time.RFC3339Nano, parts[1])
 		if err != nil {
-			return "backfill", time.Time{}, 0, 0
+			return "backfill", time.Time{}, 0, 0, -1
 		}
 		idx, start = 0, 0
 		if len(parts) == 4 {
@@ -250,16 +279,19 @@ func parseNVDCursor(c string) (mode string, modStart time.Time, idx, start int) 
 			idx = -1
 		}
 		if idx < 0 {
-			return "mod", t, 0, 0
+			return "mod", t, 0, 0, -1
 		}
-		return "mod", t, idx, start
+		return "mod", t, idx, start, -1
 	default:
-		return "backfill", time.Time{}, 0, 0
+		return "backfill", time.Time{}, 0, 0, -1
 	}
 }
 
-func formatBackfill(idx, start int) string {
-	return fmt.Sprintf("backfill|%d|%d", idx, start)
+func formatBackfill(idx, start, total int) string {
+	if total < 0 {
+		return fmt.Sprintf("backfill|%d|%d", idx, start)
+	}
+	return fmt.Sprintf("backfill|%d|%d|%d", idx, start, total)
 }
 
 func (b Bound) ranged() bool {
@@ -296,7 +328,10 @@ func mergeRecord(dst, src Record) Record {
 
 func boundKey(r ProductBound) string {
 	b := r.Bound
-	return strings.Join([]string{r.Part, r.Vendor, r.Product, b.StartIncl, b.StartExcl, b.EndIncl, b.EndExcl, b.Exact}, "|")
+	return strings.Join([]string{
+		r.Part, r.Vendor, r.Product, b.StartIncl, b.StartExcl, b.EndIncl, b.EndExcl, b.Exact,
+		EncodePlatforms(r.Platforms),
+	}, "|")
 }
 
 func formatMod(t time.Time, idx, start int) string {
@@ -377,6 +412,11 @@ func (c *NVDClient) Fetch(ctx context.Context, q NVDQuery) (NVDPage, error) {
 		if retry <= 0 {
 			retry = time.Duration(1<<attempt) * time.Second
 		}
+		// Unauthenticated callers must stay at or under 5 requests per 30s.
+		// A short Retry-After or the exponential step cannot go faster than pace.
+		if floor := c.pace(); retry < floor {
+			retry = floor
+		}
 		last = err
 		if last == nil {
 			last = fmt.Errorf("nvd status %d", status)
@@ -413,12 +453,18 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 		if end.IsZero() {
 			end = c.now()
 		}
+		if end.Sub(q.ModStart) > 120*24*time.Hour {
+			return NVDPage{}, 0, 0, fmt.Errorf("nvd lastModified window exceeds 120 days")
+		}
 		v.Set("lastModStartDate", q.ModStart.UTC().Format(nvdTimeLayout))
 		v.Set("lastModEndDate", end.UTC().Format(nvdTimeLayout))
 	}
 	u.RawQuery = v.Encode()
 	if strings.Contains(strings.ToLower(u.RawQuery), "apikey") {
 		return NVDPage{}, 0, 0, fmt.Errorf("refusing to put the api key in the query")
+	}
+	if err := ValidateFeedURL(u.String()); err != nil {
+		return NVDPage{}, 0, 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
@@ -482,21 +528,29 @@ type nvdCVE struct {
 		Value string `json:"value"`
 	} `json:"descriptions"`
 	Metrics        map[string]json.RawMessage `json:"metrics"`
-	Configurations []struct {
-		Nodes []nvdNode `json:"nodes"`
-	} `json:"configurations"`
+	Configurations []nvdConfig                `json:"configurations"`
+}
+
+type nvdConfig struct {
+	Operator string    `json:"operator"`
+	Negate   bool      `json:"negate"`
+	Nodes    []nvdNode `json:"nodes"`
+}
+
+type nvdCPE struct {
+	Vulnerable            bool     `json:"vulnerable"`
+	Criteria              string   `json:"criteria"`
+	VersionStartIncluding string   `json:"versionStartIncluding"`
+	VersionStartExcluding string   `json:"versionStartExcluding"`
+	VersionEndIncluding   string   `json:"versionEndIncluding"`
+	VersionEndExcluding   string   `json:"versionEndExcluding"`
+	RunningOn             []string `json:"runningOn"`
 }
 
 type nvdNode struct {
-	Negate   bool `json:"negate"`
-	CPEMatch []struct {
-		Vulnerable            bool   `json:"vulnerable"`
-		Criteria              string `json:"criteria"`
-		VersionStartIncluding string `json:"versionStartIncluding"`
-		VersionStartExcluding string `json:"versionStartExcluding"`
-		VersionEndIncluding   string `json:"versionEndIncluding"`
-		VersionEndExcluding   string `json:"versionEndExcluding"`
-	} `json:"cpeMatch"`
+	Operator string    `json:"operator"`
+	Negate   bool      `json:"negate"`
+	CPEMatch []nvdCPE  `json:"cpeMatch"`
 	Children []nvdNode `json:"children"`
 }
 
@@ -519,7 +573,7 @@ func ParseNVD(body []byte) (NVDPage, error) {
 			rec.Severity = Severity(rec.Score)
 		}
 		for _, cfg := range cve.Configurations {
-			walkNodes(cfg.Nodes, &rec)
+			rec.Ranges = append(rec.Ranges, configRanges(cfg)...)
 		}
 		if rec.ID != "" {
 			page.CVEs = append(page.CVEs, rec)
@@ -528,33 +582,186 @@ func ParseNVD(body []byte) (NVDPage, error) {
 	return page, nil
 }
 
-func walkNodes(nodes []nvdNode, rec *Record) {
-	for _, n := range nodes {
-		if n.Negate {
-			continue
+// configRanges applies NVD configuration semantics for a Mac fleet.
+// Configurations are OR'd by the caller. Nodes inside one configuration are
+// combined with the configuration operator (AND when NVD qualifies an
+// application with a running-on OS node). A Windows-only node does not become
+// a range. A macOS node keeps the application range and the OS bound.
+func configRanges(cfg nvdConfig) []ProductBound {
+	if cfg.Negate {
+		return nil
+	}
+	op := strings.ToUpper(strings.TrimSpace(cfg.Operator))
+	if op == "" {
+		if len(cfg.Nodes) > 1 {
+			op = "AND"
+		} else {
+			op = "OR"
 		}
-		for _, m := range n.CPEMatch {
-			if !m.Vulnerable {
+	}
+	if op == "OR" {
+		var out []ProductBound
+		for _, n := range cfg.Nodes {
+			out = append(out, nodeRanges(n)...)
+		}
+		return out
+	}
+	var apps []ProductBound
+	var plats []Platform
+	saw := false
+	for _, n := range cfg.Nodes {
+		a, p, has := nodeParts(n)
+		apps = append(apps, a...)
+		if has {
+			saw = true
+			plats = append(plats, p...)
+		}
+	}
+	if !saw {
+		return apps
+	}
+	return qualify(apps, plats)
+}
+
+func nodeRanges(n nvdNode) []ProductBound {
+	apps, plats, saw := nodeParts(n)
+	if !saw {
+		return apps
+	}
+	return qualify(apps, plats)
+}
+
+func nodeParts(n nvdNode) (apps []ProductBound, plats []Platform, saw bool) {
+	nodes := []nvdNode{n}
+	if len(n.Children) > 0 && !n.Negate {
+		nodes = append(nodes, n.Children...)
+	}
+	for _, node := range nodes {
+		for _, m := range node.CPEMatch {
+			if plat, ok := runningPlatform(m); ok {
+				if node.Negate {
+					plat.Negate = !plat.Negate
+				}
+				plats = append(plats, plat)
+				saw = true
 				continue
 			}
-			part, vendor, product, version, ok := ParseCPE(m.Criteria)
+			for _, raw := range m.RunningOn {
+				if plat, ok := platformCPE(raw); ok {
+					if node.Negate {
+						plat.Negate = !plat.Negate
+					}
+					plats = append(plats, plat)
+					saw = true
+				}
+			}
+			if node.Negate || !m.Vulnerable {
+				continue
+			}
+			app, ok := vulnerableApp(m)
 			if !ok {
 				continue
 			}
-			b := Bound{
-				StartIncl: m.VersionStartIncluding, StartExcl: m.VersionStartExcluding,
-				EndIncl: m.VersionEndIncluding, EndExcl: m.VersionEndExcluding,
-			}
-			// A ranged CPE uses "*" in the version field. A concrete version is
-			// an exact match only when NVD did not also send a range. Letting
-			// the version win would hide every other build in the range.
-			if version != "" && version != "*" && version != "-" && !b.ranged() {
-				b.Exact = version
-			}
-			rec.Ranges = append(rec.Ranges, ProductBound{Part: part, Vendor: vendor, Product: product, Bound: b})
+			apps = append(apps, app)
 		}
-		walkNodes(n.Children, rec)
 	}
+	return apps, plats, saw
+}
+
+func vulnerableApp(m nvdCPE) (ProductBound, bool) {
+	part, vendor, product, version, ok := ParseCPE(m.Criteria)
+	if !ok || part == "o" {
+		return ProductBound{}, false
+	}
+	if constrained, mac, _ := targetSoftware(m.Criteria); constrained && !mac {
+		return ProductBound{}, false
+	} else if constrained && mac {
+		b := cpeBound(m, version)
+		return ProductBound{
+			Part: part, Vendor: vendor, Product: product, Bound: b,
+			Platforms: []Platform{{Vendor: "apple", Product: "macos"}},
+		}, true
+	}
+	b := cpeBound(m, version)
+	return ProductBound{Part: part, Vendor: vendor, Product: product, Bound: b}, true
+}
+
+func cpeBound(m nvdCPE, version string) Bound {
+	b := Bound{
+		StartIncl: m.VersionStartIncluding, StartExcl: m.VersionStartExcluding,
+		EndIncl: m.VersionEndIncluding, EndExcl: m.VersionEndExcluding,
+	}
+	// A ranged CPE uses "*" in the version field. A concrete version is an
+	// exact match only when NVD did not also send a range. Letting the version
+	// win would hide every other build in the range.
+	if version != "" && version != "*" && version != "-" && !b.ranged() {
+		b.Exact = version
+	}
+	return b
+}
+
+func runningPlatform(m nvdCPE) (Platform, bool) {
+	if m.Vulnerable {
+		return Platform{}, false
+	}
+	part, vendor, product, version, ok := ParseCPE(m.Criteria)
+	if !ok || part != "o" {
+		return Platform{}, false
+	}
+	return Platform{Vendor: vendor, Product: product, Bound: cpeBound(m, version)}, true
+}
+
+func platformCPE(criteria string) (Platform, bool) {
+	part, vendor, product, version, ok := ParseCPE(criteria)
+	if !ok || part != "o" {
+		return Platform{}, false
+	}
+	b := Bound{}
+	if version != "" && version != "*" && version != "-" {
+		b.Exact = version
+	}
+	return Platform{Vendor: vendor, Product: product, Bound: b}, true
+}
+
+// targetSoftware reads the CPE 2.3 target_sw field.
+func targetSoftware(criteria string) (constrained, mac bool, sw string) {
+	f := SplitCPE(criteria)
+	if len(f) < 11 {
+		return false, false, ""
+	}
+	sw = strings.ToLower(f[10])
+	if sw == "" || sw == "*" || sw == "-" {
+		return false, false, sw
+	}
+	switch sw {
+	case "mac", "macos", "mac_os", "mac_os_x", "osx":
+		return true, true, sw
+	default:
+		return true, false, sw
+	}
+}
+
+func qualify(apps []ProductBound, plats []Platform) []ProductBound {
+	macs, ok := macPlatforms(plats)
+	if !ok {
+		return nil
+	}
+	if len(macs) == 0 {
+		return apps
+	}
+	var out []ProductBound
+	for _, app := range apps {
+		if len(app.Platforms) > 0 {
+			out = append(out, app)
+			continue
+		}
+		for _, p := range macs {
+			cp := app
+			cp.Platforms = []Platform{p}
+			out = append(out, cp)
+		}
+	}
+	return out
 }
 
 func nvdEnglish(cve nvdCVE) string {

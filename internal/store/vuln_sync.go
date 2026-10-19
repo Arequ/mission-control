@@ -86,7 +86,7 @@ func (s *Store) syncVulnerabilities(ctx context.Context, feeds vuln.Feeds) error
 	status, msg := "ok", ""
 	if len(errs) > 0 {
 		status = "error"
-		msg = strings.Join(errs, "; ")
+		msg = vuln.RedactSecret(strings.Join(errs, "; "), key)
 		if len(msg) > 2000 {
 			msg = msg[:2000]
 		}
@@ -94,7 +94,7 @@ func (s *Store) syncVulnerabilities(ctx context.Context, feeds vuln.Feeds) error
 	if _, err := s.pool.Exec(ctx, `
 		UPDATE vulnerability_settings
 		SET last_sync_at=$2, last_sync_status=$3, last_sync_error=$4, nvd_cursor=$5, updated_at=$2
-		WHERE id='default'`, "default", now, status, msg, cursor); err != nil {
+		WHERE id=$1`, "default", now, status, msg, cursor); err != nil {
 		return err
 	}
 	if err := s.CorrelateVulnerabilities(ctx, true); err != nil {
@@ -158,11 +158,11 @@ func (s *Store) saveNVDRecord(ctx context.Context, rec vuln.Record, now time.Tim
 	}
 	for _, r := range rec.Ranges {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO vuln_ranges (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, source)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'nvd')
-			ON CONFLICT (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact)
+			INSERT INTO vuln_ranges (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, platform, source)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'nvd')
+			ON CONFLICT (cve_id, part, vendor, product, start_incl, start_excl, end_incl, end_excl, exact, platform)
 			DO UPDATE SET source='nvd'`,
-			rec.ID, r.Part, r.Vendor, r.Product, r.Bound.StartIncl, r.Bound.StartExcl, r.Bound.EndIncl, r.Bound.EndExcl, r.Bound.Exact); err != nil {
+			rec.ID, r.Part, r.Vendor, r.Product, r.Bound.StartIncl, r.Bound.StartExcl, r.Bound.EndIncl, r.Bound.EndExcl, r.Bound.Exact, vuln.EncodePlatforms(r.Platforms)); err != nil {
 			_ = tx.Rollback(ctx)
 			return err
 		}
@@ -304,6 +304,12 @@ func (s *Store) syncRapid7(ctx context.Context, feeds vuln.Feeds, now time.Time)
 	})
 	if err != nil {
 		return err
+	}
+	// An empty page is not "the fleet is clean". A failed or truncated fetch
+	// must not delete the findings that the last good sync stored, because
+	// correlation would then auto-resolve Rapid7-only issues.
+	if len(rows) == 0 {
+		return nil
 	}
 	devices, err := s.rapid7Devices(ctx)
 	if err != nil {

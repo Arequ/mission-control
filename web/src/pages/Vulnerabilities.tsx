@@ -66,7 +66,7 @@ export function VulnerabilitiesPage() {
           <Stat k="Within SLA" v={percent(summary?.within_sla, summary?.open)} note={summary ? `${summary.due_this_week} due this week` : ""} warn={!!summary && summary.due_this_week > 0} />
         </div>
         <div className="filters">
-          <Filter on={!kev && !severity && !status && !hasFix} onClick={() => { setKev(false); setSeverity(""); setStatus(""); setHasFix(false); }}>Open</Filter>
+          <Filter on={!kev && !severity && !status && !hasFix} onClick={() => { setKev(false); setSeverity(""); setStatus(""); setHasFix(false); }}>All</Filter>
           <Filter on={kev} onClick={() => setKev((v) => !v)}>KEV</Filter>
           <Filter on={hasFix} onClick={() => setHasFix((v) => !v)}>Fix in Munki</Filter>
           {severities.map((item) => (

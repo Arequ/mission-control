@@ -25,6 +25,38 @@ type token struct {
 // before the release. A hyphen that starts a digit stays in the release, so
 // 1.0-1 is newer than 1.0.
 func Compare(a, b string) (int, bool) {
+	c, ok := compareCore(a, b)
+	if !ok || c != 0 {
+		return c, ok
+	}
+	_, ab, ar := peelDecorations(a)
+	_, bb, br := peelDecorations(b)
+	if ab != "" && bb != "" {
+		if c = cmpNum(ab, bb); c != 0 {
+			return c, true
+		}
+	}
+	switch {
+	case ar == "" && br == "":
+		return 0, true
+	case ar == "":
+		return -1, true
+	case br == "":
+		return 1, true
+	default:
+		if ar < br {
+			return -1, true
+		}
+		if ar > br {
+			return 1, true
+		}
+		return 0, true
+	}
+}
+
+// compareCore orders the numeric release, ignoring a parenthetical build and
+// a Rapid Security Response letter. Those are tie-breaks in Compare.
+func compareCore(a, b string) (int, bool) {
 	ar, ap, aok := splitVersion(a)
 	br, bp, bok := splitVersion(b)
 	if !aok || !bok {
@@ -50,6 +82,8 @@ func splitVersion(s string) (release, pre []token, ok bool) {
 	if len(s) > 200 {
 		return nil, nil, false
 	}
+	core, _, _ := peelDecorations(s)
+	s = core
 	if len(s) > 1 && s[0] == 'v' && s[1] >= '0' && s[1] <= '9' {
 		s = s[1:]
 	}
@@ -60,6 +94,14 @@ func splitVersion(s string) (release, pre []token, ok bool) {
 		preStr = s[i+1:]
 	}
 	release = tokenize(main)
+	if n := len(release); n > 0 && !release[n-1].num && release[n-1].text == "esr" {
+		release = release[:n-1]
+	}
+	if preStr == "" {
+		var extra []token
+		release, extra = splitPrerelease(main, release)
+		pre = extra
+	}
 	if len(release) == 0 {
 		return nil, nil, false
 	}
@@ -70,6 +112,67 @@ func splitVersion(s string) (release, pre []token, ok bool) {
 		}
 	}
 	return release, pre, true
+}
+
+// peelDecorations separates a Zoom-style "(12345)" build and an Apple Rapid
+// Security Response letter "(a)" from the version they decorate.
+func peelDecorations(s string) (core, build, rsr string) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if len(s) < 4 || s[len(s)-1] != ')' {
+		return s, "", ""
+	}
+	i := strings.LastIndexByte(s, '(')
+	if i <= 0 {
+		return s, "", ""
+	}
+	inner := strings.TrimSpace(s[i+1 : len(s)-1])
+	base := strings.TrimSpace(s[:i])
+	if base == "" || inner == "" {
+		return s, "", ""
+	}
+	if allDigits(inner) {
+		return base, inner, ""
+	}
+	if len(inner) == 1 && isLetter(rune(inner[0])) {
+		return base, "", inner
+	}
+	return s, "", ""
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func splitPrerelease(raw string, toks []token) (rel, pre []token) {
+	dotted := strings.ContainsAny(raw, ".-_")
+	for i, t := range toks {
+		if t.num || !prereleaseWord(t.text) {
+			continue
+		}
+		// 24B91 is a build, not a beta. A dotted 131.0b1 is a beta.
+		if !dotted && i == 1 && len(t.text) == 1 && toks[0].num && i+1 < len(toks) && toks[i+1].num {
+			continue
+		}
+		return toks[:i], toks[i:]
+	}
+	return toks, nil
+}
+
+func prereleaseWord(s string) bool {
+	switch s {
+	case "alpha", "beta", "rc", "pre", "preview", "dev", "canary", "nightly", "b", "a":
+		return true
+	default:
+		return false
+	}
 }
 
 func tokenize(s string) []token {

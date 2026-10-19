@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -113,13 +115,46 @@ func parseCivil(s string) time.Time {
 	return time.Time{}
 }
 
-// ParseEPSS reads a FIRST page. Scores are strings in the payload.
+// flexFloat accepts the string scores FIRST publishes and a bare JSON number.
+type flexFloat float64
+
+func (f *flexFloat) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		if strings.TrimSpace(s) == "" {
+			return nil
+		}
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			*f = flexFloat(math.NaN())
+			return nil
+		}
+		*f = flexFloat(v)
+		return nil
+	}
+	var v float64
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*f = flexFloat(v)
+	return nil
+}
+
+// ParseEPSS reads a FIRST page. Scores are strings in the live payload and
+// numbers in some mirrors.
 func ParseEPSS(body []byte) ([]EPSSItem, error) {
 	var doc struct {
 		Data []struct {
-			CVE        string `json:"cve"`
-			EPSS       string `json:"epss"`
-			Percentile string `json:"percentile"`
+			CVE        string    `json:"cve"`
+			EPSS       flexFloat `json:"epss"`
+			Percentile flexFloat `json:"percentile"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &doc); err != nil {
@@ -128,15 +163,10 @@ func ParseEPSS(body []byte) ([]EPSSItem, error) {
 	out := make([]EPSSItem, 0, len(doc.Data))
 	for _, row := range doc.Data {
 		id := strings.ToUpper(strings.TrimSpace(row.CVE))
-		if !ValidCVE(id) {
+		if !ValidCVE(id) || math.IsNaN(float64(row.EPSS)) {
 			continue
 		}
-		score, err := strconv.ParseFloat(row.EPSS, 64)
-		if err != nil {
-			continue
-		}
-		pct, _ := strconv.ParseFloat(row.Percentile, 64)
-		out = append(out, EPSSItem{CVE: id, Score: score, Percentile: pct})
+		out = append(out, EPSSItem{CVE: id, Score: float64(row.EPSS), Percentile: float64(row.Percentile)})
 	}
 	return out, nil
 }
@@ -314,14 +344,20 @@ func ParseRapid7API(body []byte) ([]Rapid7Finding, error) {
 // the mapped index. A full page is followed by the next page. A short page stops.
 func FetchRapid7(ctx context.Context, hc *http.Client, src Rapid7Source) ([]Rapid7Finding, error) {
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = SafeFeedClient()
 	}
 	if src.Mode == "elastic" || (src.Mode == "" && src.ElasticURL != "") {
+		if err := ValidateFeedURL(src.ElasticURL); err != nil {
+			return nil, err
+		}
 		return fetchRapid7Elastic(ctx, hc, src)
 	}
 	base := strings.TrimRight(src.BaseURL, "/")
 	if base == "" {
 		return nil, fmt.Errorf("rapid7 connector has no base url")
+	}
+	if err := ValidateFeedURL(base); err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/v1/findings", nil)
 	if err != nil {
@@ -460,10 +496,129 @@ func dig(v any, path string) string {
 	}
 }
 
-// GetJSON fetches a feed document.
+// RedactSecret removes a credential from an error before it is stored or
+// returned. Short strings are left alone so a one-character key cannot blank
+// an unrelated message.
+func RedactSecret(msg, secret string) string {
+	secret = strings.TrimSpace(secret)
+	if len(secret) < 8 || msg == "" || !strings.Contains(msg, secret) {
+		return msg
+	}
+	return strings.ReplaceAll(msg, secret, "[redacted]")
+}
+
+// ValidateFeedURL rejects feed and connector URLs that point at the instance
+// metadata service or a link-local address. Loopback and private addresses
+// stay allowed so a connector can run beside the server and tests can use
+// httptest. Credentials in the URL are rejected.
+func ValidateFeedURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return fmt.Errorf("feed url is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("feed url must be an http(s) URL")
+	}
+	if u.User != nil {
+		return fmt.Errorf("feed url must not include credentials")
+	}
+	host := u.Hostname()
+	if feedMetadataHost(host) {
+		return fmt.Errorf("feed url must not target the instance metadata service")
+	}
+	if ip := net.ParseIP(host); ip != nil && feedDeniedIP(ip) {
+		return fmt.Errorf("feed url must not target a link-local address")
+	}
+	return nil
+}
+
+// SafeFeedClient fetches feeds without following redirects and without
+// dialing link-local or metadata addresses. A 302 cannot pivot the request.
+func SafeFeedClient() *http.Client {
+	return &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return fmt.Errorf("feed redirects are not followed")
+		},
+		Transport: &http.Transport{
+			Proxy:                 nil,
+			DialContext:           safeFeedDial,
+			ResponseHeaderTimeout: 15 * time.Second,
+			IdleConnTimeout:       30 * time.Second,
+			MaxIdleConns:          8,
+		},
+	}
+}
+
+func safeFeedDial(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	d := &net.Dialer{Timeout: 5 * time.Second}
+	if ip := net.ParseIP(host); ip != nil {
+		if feedDeniedIP(ip) {
+			return nil, fmt.Errorf("feed address %s is not allowed", ip)
+		}
+		return d.DialContext(ctx, network, addr)
+	}
+	if feedMetadataHost(host) {
+		return nil, fmt.Errorf("feed host %s is not allowed", host)
+	}
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	var dialErr error
+	for _, ip := range ips {
+		if feedDeniedIP(ip.IP) {
+			dialErr = fmt.Errorf("feed address %s is not allowed", ip.IP)
+			continue
+		}
+		conn, err := d.DialContext(ctx, network, net.JoinHostPort(ip.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		dialErr = err
+	}
+	if dialErr == nil {
+		dialErr = fmt.Errorf("feed: no address for %s", host)
+	}
+	return nil, dialErr
+}
+
+func feedDeniedIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 169 && v4[1] == 254 {
+		return true
+	}
+	return false
+}
+
+func feedMetadataHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	switch host {
+	case "metadata.google.internal", "metadata.goog":
+		return true
+	default:
+		return false
+	}
+}
+
+// GetJSON fetches a feed document. The URL is checked before the request so
+// a configured KEV, EPSS, SOFA, or NVD base cannot target link-local metadata.
 func GetJSON(ctx context.Context, hc *http.Client, rawURL string) ([]byte, error) {
+	if err := ValidateFeedURL(rawURL); err != nil {
+		return nil, err
+	}
 	if hc == nil {
-		hc = http.DefaultClient
+		hc = SafeFeedClient()
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {

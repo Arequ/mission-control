@@ -134,7 +134,10 @@ func versionLess(a, b string) bool {
 }
 
 func belowFix(version, build string, t Train) (bool, bool) {
-	c, ok := Compare(version, t.FixedVersion)
+	// Compare the release numbers first. A Rapid Security Response letter must
+	// not hide an equal numeric version from the build check: a Mac reporting
+	// 13.3.1 build 22E772610a is that RSR, not an older 13.3.1.
+	c, ok := compareCore(version, t.FixedVersion)
 	if !ok {
 		return false, false
 	}
@@ -144,14 +147,22 @@ func belowFix(version, build string, t Train) (bool, bool) {
 	if c > 0 {
 		return false, true
 	}
-	if t.FixedBuild == "" || strings.TrimSpace(build) == "" {
-		return false, true
+	if t.FixedBuild != "" && strings.TrimSpace(build) != "" {
+		bc, bok := Compare(build, t.FixedBuild)
+		if !bok {
+			return false, false
+		}
+		return bc < 0, true
 	}
-	bc, bok := Compare(build, t.FixedBuild)
-	if !bok {
-		return false, false
+	_, _, installedRSR := peelDecorations(version)
+	_, _, fixedRSR := peelDecorations(t.FixedVersion)
+	if installedRSR == "" && fixedRSR != "" {
+		return true, true
 	}
-	return bc < 0, true
+	if installedRSR != "" && fixedRSR != "" {
+		return installedRSR < fixedRSR, true
+	}
+	return false, true
 }
 
 // Product is a CPE vendor/product an install can be tied to.
@@ -225,7 +236,7 @@ var catalog = []curated{
 	{bundles: []string{"com.microsoft.teams", "com.microsoft.teams2"}, names: []string{"microsoft teams"}, munki: []string{"MicrosoftTeams", "Teams"}, part: "a", vendor: "microsoft", product: "teams", source: "short"},
 	{bundles: []string{"com.microsoft.vscode"}, names: []string{"visual studio code"}, munki: []string{"VSCode", "Visual Studio Code"}, part: "a", vendor: "microsoft", product: "visual_studio_code", source: "short"},
 	{bundles: []string{"com.docker.docker"}, names: []string{"docker", "docker desktop"}, munki: []string{"Docker", "DockerDesktop"}, part: "a", vendor: "docker", product: "docker_desktop", source: "short"},
-	{bundles: []string{"com.1password.1password"}, names: []string{"1password"}, munki: []string{"1Password", "OnePassword"}, part: "a", vendor: "1password", product: "1password", source: "short"},
+	{bundles: []string{"com.1password.1password", "com.agilebits.onepassword7"}, names: []string{"1password"}, munki: []string{"1Password", "OnePassword"}, part: "a", vendor: "1password", product: "1password", source: "short"},
 	{bundles: []string{"com.apple.safari"}, names: []string{"safari"}, munki: []string{"Safari"}, part: "a", vendor: "apple", product: "safari", source: "short"},
 }
 
@@ -280,9 +291,13 @@ func MatchSoftware(name, bundle string, overrides []Override) (Product, bool) {
 		if p, ok := byBundle[bundle]; ok {
 			return p, true
 		}
+		// A bundle id that is not the curated app is a different product, even
+		// when the display name matches. Name matching is only for inventory
+		// that has no bundle id (a Munki item or a Rapid7 software name).
 		if helperBundle(bundle) {
 			return Product{}, false
 		}
+		return Product{}, false
 	}
 	if name != "" {
 		for _, o := range overrides {
@@ -392,9 +407,18 @@ func AppleOS(vendor, product string) bool {
 // ChooseVersion picks the version to compare. The short version is the one
 // NVD and Apple publish. The bundle version is used only when the short
 // version is missing and it has the same shape as the bounds.
-func ChooseVersion(short, bundle string, bounds []string) (string, bool) {
+func ChooseVersion(short, bundle, source string, bounds []string) (string, bool) {
 	short = strings.TrimSpace(short)
 	bundle = strings.TrimSpace(bundle)
+	if strings.EqualFold(strings.TrimSpace(source), "bundle") && bundle != "" {
+		if len(bounds) == 0 || SameShape(bundle, bounds...) {
+			return bundle, true
+		}
+		if short != "" && (len(bounds) == 0 || SameShape(short, bounds...)) {
+			return short, true
+		}
+		return bundle, false
+	}
 	if short != "" {
 		if len(bounds) == 0 || SameShape(short, bounds...) {
 			return short, true

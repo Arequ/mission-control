@@ -158,15 +158,15 @@ func TestMatchSoftwareTruePositives(t *testing.T) {
 
 func TestChooseVersionPrefersShort(t *testing.T) {
 	bounds := []string{"131.0.6778.85"}
-	got, ok := ChooseVersion("131.0.6778.70", "6778.70", bounds)
+	got, ok := ChooseVersion("131.0.6778.70", "6778.70", "short", bounds)
 	if !ok || got != "131.0.6778.70" {
 		t.Fatalf("short version %q %v", got, ok)
 	}
-	got, ok = ChooseVersion("", "6778.86", bounds)
+	got, ok = ChooseVersion("", "6778.86", "short", bounds)
 	if ok {
 		t.Fatalf("bare bundle version was treated as comparable: %q", got)
 	}
-	got, ok = ChooseVersion("", "130.0.6723.117", bounds)
+	got, ok = ChooseVersion("", "130.0.6723.117", "short", bounds)
 	if !ok || got != "130.0.6723.117" {
 		t.Fatalf("bundle fallback %q %v", got, ok)
 	}

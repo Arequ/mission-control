@@ -236,6 +236,9 @@ func (s *Store) AddVulnerabilityNote(ctx context.Context, p model.Principal, id 
 	if err := insertIssueEvent(ctx, tx, id, now, actorName(p), "note", map[string]any{"note": note}); err != nil {
 		return model.VulnerabilityIssue{}, err
 	}
+	if err := s.audit(ctx, tx, p, "note", "vulnerability_issue", id, map[string]any{"revision": revision}); err != nil {
+		return model.VulnerabilityIssue{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return model.VulnerabilityIssue{}, err
 	}
@@ -247,8 +250,12 @@ func (s *Store) AddVulnerabilityNote(ctx context.Context, p model.Principal, id 
 }
 
 // RunVulnerabilityRecipe enqueues the recipe Decide linked to this issue.
-// It does not promote a package and it does not edit Terraform.
+// It does not promote a package and it does not edit Terraform. The caller
+// must hold jobs:write as well as vuln:write; the HTTP handler checks both.
 func (s *Store) RunVulnerabilityRecipe(ctx context.Context, p model.Principal, id string) (model.Job, error) {
+	if !p.Allows("jobs:write") {
+		return model.Job{}, fmt.Errorf("%w: jobs:write is required to run a recipe", ErrForbidden)
+	}
 	detail, err := s.GetVulnerabilityIssue(ctx, id)
 	if err != nil {
 		return model.Job{}, err
@@ -259,7 +266,32 @@ func (s *Store) RunVulnerabilityRecipe(ctx context.Context, p model.Principal, i
 	if vuln.GitOpsBoundary == "" {
 		return model.Job{}, invalid("gitops boundary")
 	}
-	return s.EnqueueManual(ctx, p, detail.Fix.RecipeID)
+	rec, err := s.GetRecipe(ctx, detail.Fix.RecipeID)
+	if err != nil {
+		return model.Job{}, err
+	}
+	if !rec.Enabled {
+		return model.Job{}, invalid("recipe is disabled")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Job{}, err
+	}
+	job, err := s.insertJob(ctx, tx, p, detail.Fix.RecipeID, nil, "manual")
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		return model.Job{}, err
+	}
+	if err := s.audit(ctx, tx, p, "run_recipe", "vulnerability_issue", id, map[string]any{
+		"recipe_id": detail.Fix.RecipeID, "job_id": job.ID, "cve_id": detail.CVEID,
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		return model.Job{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.Job{}, err
+	}
+	return s.GetJob(ctx, job.ID, false)
 }
 
 func (s *Store) queryIssues(ctx context.Context, f model.IssueFilter) ([]model.VulnerabilityIssue, error) {
@@ -383,7 +415,7 @@ func (s *Store) decorateIssues(ctx context.Context, issues []model.Vulnerability
 		}
 		issue.SLADays = slaDays(settings, issue.Severity, issue.KEV)
 		issue.SLADue = issue.OpenedAt.Add(time.Duration(issue.SLADays) * 24 * time.Hour)
-		issue.WithinSLA = issue.Status == "fixed" || now.Before(issue.SLADue)
+		issue.WithinSLA = issue.Status == "fixed" || !now.After(issue.SLADue)
 	}
 	return issues, nil
 }
@@ -519,19 +551,23 @@ func hasCatalogFix(action string) bool {
 }
 
 func slaDays(s model.VulnerabilitySettings, severity string, kev bool) int {
-	if kev {
-		return s.SLAKEVDays
-	}
+	days := s.SLALowDays
 	switch severity {
 	case "critical":
-		return s.SLACriticalDays
+		days = s.SLACriticalDays
 	case "high":
-		return s.SLAHighDays
+		days = s.SLAHighDays
 	case "medium":
-		return s.SLAMediumDays
-	default:
-		return s.SLALowDays
+		days = s.SLAMediumDays
 	}
+	if days <= 0 {
+		days = 90
+	}
+	// A KEV issue uses the tighter of the severity clock and the CISA clock.
+	if kev && s.SLAKEVDays > 0 && s.SLAKEVDays < days {
+		days = s.SLAKEVDays
+	}
+	return days
 }
 
 func splitSoftware(key string) (string, string) {
