@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useState, type C
 import { flushSync } from "react-dom";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api, clearToken } from "./api";
+import { acceptMeta, FALLBACK_META, type ConfigKind, type ServerMeta } from "./configLinks";
 import { Icon, type IconName } from "./icons";
 
 type Theme = "light" | "dark";
@@ -10,6 +11,11 @@ const THEME_KEY = "mc.theme";
 type ThemeCtx = { theme: Theme; setTheme: (next: Theme) => void };
 const ThemeContext = createContext<ThemeCtx>({ theme: "light", setTheme: () => {} });
 const SearchContext = createContext({ q: "", setQ: (_value: string) => { void _value; } });
+const MetaContext = createContext<ServerMeta>(FALLBACK_META);
+
+export function useServerMeta() {
+  return useContext(MetaContext);
+}
 
 export function useTheme() {
   return useContext(ThemeContext);
@@ -25,6 +31,18 @@ function readTheme(): Theme {
 export function Providers({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readTheme);
   const [q, setQ] = useState("");
+  const [meta, setMeta] = useState<ServerMeta>(FALLBACK_META);
+  useEffect(() => {
+    let stop = false;
+    fetch("/api/v1/meta")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("meta"))))
+      .then((body: unknown) => {
+        const next = acceptMeta(body);
+        if (!stop && next) setMeta(next);
+      })
+      .catch(() => {});
+    return () => { stop = true; };
+  }, []);
   const setTheme = (next: Theme) => {
     const apply = () => {
       document.documentElement.classList.toggle("dark", next === "dark");
@@ -41,7 +59,9 @@ export function Providers({ children }: { children: ReactNode }) {
   };
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>
-      <SearchContext.Provider value={{ q, setQ }}>{children}</SearchContext.Provider>
+      <MetaContext.Provider value={meta}>
+        <SearchContext.Provider value={{ q, setQ }}>{children}</SearchContext.Provider>
+      </MetaContext.Provider>
     </ThemeContext.Provider>
   );
 }
@@ -50,6 +70,7 @@ function section(path: string) {
   if (path.startsWith("/munki")) return "munki";
   if (path.startsWith("/settings")) return "settings";
   if (path.startsWith("/coverage")) return "coverage";
+  if (path.startsWith("/vulnerabilities")) return "vulns";
   if (path.startsWith("/devices")) return "devices";
   if (path.startsWith("/queries")) return "queries";
   if (path.startsWith("/logs")) return "logs";
@@ -64,7 +85,7 @@ export function Layout() {
   const active = section(pathname);
   const [y, setY] = useState(0);
   const [ready, setReady] = useState(false);
-  const [counts, setCounts] = useState({ recipes: 0, packages: 0, devices: 0, logs: 0 });
+  const [counts, setCounts] = useState({ recipes: 0, packages: 0, devices: 0, logs: 0, kev: 0 });
   const [apiOk, setApiOk] = useState(true);
 
   useLayoutEffect(() => {
@@ -93,6 +114,7 @@ export function Layout() {
       api.packages().then((packages) => { if (!stop) setCounts((c) => ({ ...c, packages: packages.packages.length })); }).catch(() => {});
       api.summary().then((summary) => { if (!stop) setCounts((c) => ({ ...c, devices: summary.total_devices })); }).catch(() => {});
       api.logViews().then((views) => { if (!stop) setCounts((c) => ({ ...c, logs: views.views.length })); }).catch(() => {});
+      api.vulnerabilityIssues({ active: true, limit: 1 }).then((page) => { if (!stop) setCounts((c) => ({ ...c, kev: page.summary.kev })); }).catch(() => {});
     };
     load();
     const t = setInterval(load, 8000);
@@ -115,7 +137,7 @@ export function Layout() {
             <input
               value={q}
               onChange={(event) => setQ(event.target.value)}
-              placeholder="Search devices, software, logs…"
+              placeholder="Search devices, software, CVEs, logs…"
               aria-label="Search"
             />
             {q ? <button className="kbd" type="button" onClick={() => setQ("")} aria-label="Clear search">Clear</button> : null}
@@ -143,6 +165,7 @@ export function Layout() {
           <SideLink id="logs" to="/logs" icon="logs" label="Logs" count={counts.logs ? String(counts.logs) : ""} active={active === "logs"} />
           <div className="side-h" style={{ marginTop: 14 }}>Security</div>
           <SideLink id="coverage" to="/coverage" icon="shield" label="Security Coverage" active={active === "coverage"} />
+          <SideLink id="vulns" to="/vulnerabilities" icon="flame" label="Vulnerabilities" count={counts.kev ? `${counts.kev} KEV` : ""} hot={counts.kev > 0} active={active === "vulns"} />
           <div className="side-h" style={{ marginTop: 14 }}>Software</div>
           <SideLink id="munki" to="/munki" icon="package" label="Munki" count={counts.packages ? String(counts.packages) : ""} active={active === "munki"} />
           <SideLink id="autopkg" to="/autopkg" icon="workflow" label="AutoPKG" count={counts.recipes ? String(counts.recipes) : ""} active={active === "autopkg"} />
@@ -162,14 +185,14 @@ export function Layout() {
   );
 }
 
-function SideLink({ id, to, icon, label, count, active, end }: {
-  id: string; to: string; icon: IconName; label: string; count?: string; active: boolean; end?: boolean;
+function SideLink({ id, to, icon, label, count, hot, active, end }: {
+  id: string; to: string; icon: IconName; label: string; count?: string; hot?: boolean; active: boolean; end?: boolean;
 }) {
   return (
     <NavLink id={`nav-${id}`} to={to} end={end} className={`nav${active ? " active" : ""}`} aria-current={active ? "page" : undefined}>
       <Icon name={icon} size={16} />
       <span>{label}</span>
-      {count ? <span className="cnt">{count}</span> : null}
+      {count ? <span className={`cnt${hot ? " hot" : ""}`}>{count}</span> : null}
     </NavLink>
   );
 }
@@ -227,11 +250,11 @@ export function Managed({ small }: { small?: boolean }) {
   return <span className={`tf${small ? " sm" : ""}`}><Icon name="lock" size={11} />Managed by Terraform</span>;
 }
 
-export const CONFIG_REPO = "https://github.com/Arequ/terraform-mission-control";
-
-export function ProposeChange() {
+export function ProposeChange({ kind }: { kind: ConfigKind }) {
+  const meta = useServerMeta();
+  const href = meta.config_links[kind] || FALLBACK_META.config_links[kind] || "";
   return (
-    <a className="capsule" href={CONFIG_REPO} target="_blank" rel="noreferrer">
+    <a className="capsule" href={href} target="_blank" rel="noreferrer">
       Propose change
     </a>
   );

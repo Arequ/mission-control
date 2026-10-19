@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useParams } from "react-router-dom";
 import { api, type Device, type DeviceEvent } from "../api";
 import { Icon } from "../icons";
 import { LiveQueryPanel } from "./LiveQuery";
+import { DeviceVulnerabilities } from "./Vulnerabilities";
 import { Empty, Page, StatusPill, ago, enterStyle, gigabytes, match, uptime, useSearch } from "../ui";
 
 export function DevicePage() {
@@ -23,7 +24,13 @@ export function DevicePage() {
     return () => { stop = true; clearInterval(t); };
   }, [id]);
 
-  const tab = pathname.endsWith("/software") ? "software" : pathname.endsWith("/queries") ? "queries" : "overview";
+  const tab = pathname.endsWith("/software")
+    ? "software"
+    : pathname.endsWith("/queries")
+      ? "queries"
+      : pathname.endsWith("/vulnerabilities")
+        ? "vulnerabilities"
+        : "overview";
 
   return (
     <Page>
@@ -55,6 +62,7 @@ export function DevicePage() {
             {tab === "overview" ? <DeviceOverview device={device} /> : null}
             {tab === "software" ? <DeviceSoftware device={device} /> : null}
             {tab === "queries" ? <LiveQueryPanel deviceId={device.id} deviceName={device.computer_name || device.hostname} /> : null}
+            {tab === "vulnerabilities" ? <DeviceVulnerabilities id={device.id} /> : null}
           </>
         ) : null}
       </div>
@@ -67,6 +75,7 @@ function DeviceTabs({ id, tab }: { id: string; tab: string }) {
     { to: `/devices/${id}`, label: "Overview", on: tab === "overview" },
     { to: `/devices/${id}/software`, label: "Software", on: tab === "software" },
     { to: `/devices/${id}/queries`, label: "Queries", on: tab === "queries" },
+    { to: `/devices/${id}/vulnerabilities`, label: "Vulnerabilities", on: tab === "vulnerabilities" },
   ];
   const index = Math.max(0, items.findIndex((item) => item.on));
   return (

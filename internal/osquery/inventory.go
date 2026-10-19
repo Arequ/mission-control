@@ -34,7 +34,7 @@ func InventoryQueries() []ScheduledQuery {
 		{Name: QInterfaceAddresses, Snapshot: true, SQL: `SELECT interface, address, mask, type FROM interface_addresses`},
 		{Name: QInterfaceDetails, Snapshot: true, SQL: `SELECT interface, mac, type FROM interface_details`},
 		{Name: QLoggedInUsers, Snapshot: true, SQL: `SELECT type, user, tty, host FROM logged_in_users`},
-		{Name: QApps, Snapshot: true, Platform: "darwin", SQL: `SELECT name, path, bundle_identifier, bundle_short_version FROM apps`},
+		{Name: QApps, Snapshot: true, Platform: "darwin", SQL: `SELECT name, path, bundle_identifier, bundle_short_version, bundle_version FROM apps`},
 		{Name: QDiskEncryption, Snapshot: true, Platform: "darwin,windows", SQL: `SELECT name, uuid, encrypted FROM disk_encryption`},
 		{Name: QUptime, Snapshot: true, SQL: `SELECT total_seconds FROM uptime`},
 	}

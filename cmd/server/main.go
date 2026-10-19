@@ -12,10 +12,12 @@ import (
 
 	"github.com/Arequ/mission-control/internal/clock"
 	"github.com/Arequ/mission-control/internal/config"
+	"github.com/Arequ/mission-control/internal/configrepo"
 	"github.com/Arequ/mission-control/internal/httpapi"
 	"github.com/Arequ/mission-control/internal/osquery"
 	"github.com/Arequ/mission-control/internal/storage"
 	"github.com/Arequ/mission-control/internal/store"
+	"github.com/Arequ/mission-control/internal/vuln"
 )
 
 func main() {
@@ -77,6 +79,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	st.SetConfigRepo(configrepo.Repo{Slug: cfg.ConfigRepo, Branch: cfg.ConfigBranch})
+	st.SetVulnerabilityFeeds(vuln.Feeds{HTTP: vuln.SafeFeedClient()})
 
 	var sink osquery.Forwarder = osquery.NopForwarder{}
 	if cfg.ElasticURL != "" {
@@ -95,6 +99,7 @@ func main() {
 		InventoryInterval: cfg.InventoryInterval,
 		Forwarder:         sink,
 		LogRetention:      cfg.LogRetention,
+		ConfigRepo:        configrepo.Repo{Slug: cfg.ConfigRepo, Branch: cfg.ConfigBranch},
 	})
 	if err := srv.Tick(ctx); err != nil {
 		log.Error("initial scheduler tick", "err", err)

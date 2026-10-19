@@ -45,6 +45,13 @@ variable "elastic_api_key" {
   default     = "example-elastic-api-key"
 }
 
+variable "nvd_api_key" {
+  description = "Optional NVD API 2.0 key. Write-only. This default is a local placeholder, not a production secret. Leave it empty to use the public rate limit."
+  type        = string
+  sensitive   = true
+  default     = "example-nvd-api-key"
+}
+
 variable "soak_days" {
   description = "Days a package stays in the testing catalog before promotion. Use 0 to promote on the next scheduler tick."
   type        = number
