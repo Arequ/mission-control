@@ -20,6 +20,10 @@ const (
 	// MaxSameInstant caps how many equal-timestamp hits are inspected
 	// when a reverse search_after cursor is not available.
 	MaxSameInstant = 1000
+	// MaxScan bounds how many raw hits one source read will walk while
+	// filtering timestamps, seen lines, or a renewed point-in-time. Past this
+	// the read fails instead of silently dropping the rest.
+	MaxScan = 8000
 	// QueryTimeout bounds one run, tail, or context call.
 	QueryTimeout = 20 * time.Second
 )
@@ -60,12 +64,17 @@ type Bind struct {
 	HardwareUUID string
 }
 
-// Key is the total order of a line: time, then source, then offset, then tie.
+// Key is the total order of a line: time, then source, then offset, then the
+// Elasticsearch sort tuple, then the tie id.
 type Key struct {
 	Time   time.Time
 	Source int
 	Seq    int64
 	Tie    string
+	// Ord is the sortable encoding of the Elasticsearch sort tuple. When both
+	// keys have one, it decides ties the same way _shard_doc does. Identity
+	// stays on Tie so a line id does not change when a point-in-time is renewed.
+	Ord string
 }
 
 // Before reports whether k sorts before o.
@@ -78,6 +87,9 @@ func (k Key) Before(o Key) bool {
 	}
 	if k.Seq != o.Seq {
 		return k.Seq < o.Seq
+	}
+	if k.Ord != "" && o.Ord != "" && k.Ord != o.Ord {
+		return k.Ord < o.Ord
 	}
 	return k.Tie < o.Tie
 }
@@ -100,7 +112,7 @@ type Hit struct {
 
 // Key returns the merge key for h.
 func (h Hit) Key() Key {
-	return Key{Time: h.Time, Source: h.Source, Seq: h.Seq, Tie: h.Tie}
+	return Key{Time: h.Time, Source: h.Source, Seq: h.Seq, Tie: h.Tie, Ord: SortOrd(h.Sort)}
 }
 
 // Line is a merged log line returned by the API.
@@ -151,12 +163,19 @@ type SearchRequest struct {
 	Desc bool
 	// PIT is an Elasticsearch point-in-time to reuse. Empty opens a new one.
 	PIT string
+	// Returned is the set of tie ids already shown for this source. A renewed
+	// point-in-time cannot resume on _shard_doc, so these ids are how a page
+	// boundary avoids repeating lines whose new shard order moved.
+	Returned []string
 }
 
 // Result is one source page. PIT is empty for readers that do not use Elasticsearch.
 type Result struct {
 	Hits []Hit
 	PIT  string
+	// Renewed is true when the point-in-time expired and the hits were read
+	// from a new snapshot. Their sort tuples are not comparable with the cursor.
+	Renewed bool
 }
 
 // Reader reads one source. Implementations must honor Limit and the key bounds

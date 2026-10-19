@@ -964,7 +964,7 @@ html.dark .textlink { color: var(--accent-ink); }
   font-weight: 600;
   border-bottom: 1px solid var(--sep-2);
 }
-.log-scroll { flex: 1; min-height: 0; overflow: auto; }
+.log-scroll { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; }
 .log-canvas { position: relative; }
 .log-row {
   position: absolute;

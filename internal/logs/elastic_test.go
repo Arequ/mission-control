@@ -15,6 +15,10 @@ func TestElasticSearchAfterAndPIT(t *testing.T) {
 	var bodies []string
 	var sawKey bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/_field_caps") {
+			_, _ = io.WriteString(w, `{"fields":{"host.name":{"keyword":{"type":"keyword"}}}}`)
+			return
+		}
 		if strings.Contains(r.URL.Path, "/_pit") {
 			_, _ = io.WriteString(w, `{"id":"pit-1"}`)
 			return

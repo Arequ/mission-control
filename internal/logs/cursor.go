@@ -16,6 +16,17 @@ type pageCursor struct {
 	Low        *storedKey  `json:"l,omitempty"`
 	N          int         `json:"n"`
 	MoreBefore bool        `json:"mb,omitempty"`
+	// Seen is the identity of lines already returned inside the open page.
+	// Tail re-reads that range on a fresh point-in-time and drops these so a
+	// line ingested late, with a timestamp inside the page, is returned once.
+	Seen []seenRef `json:"seen,omitempty"`
+}
+
+type seenRef struct {
+	S  int    `json:"s"`
+	T  int64  `json:"t"`
+	Q  int64  `json:"q"`
+	ID string `json:"id"`
 }
 
 type cursorPos struct {
@@ -38,7 +49,7 @@ type storedKey struct {
 }
 
 func (p cursorPos) key() Key {
-	return Key{Time: time.Unix(0, p.T).UTC(), Source: p.I, Seq: p.Q, Tie: p.ID}
+	return Key{Time: time.Unix(0, p.T).UTC(), Source: p.I, Seq: p.Q, Tie: p.ID, Ord: SortOrd(p.Sort)}
 }
 
 func posFrom(h Hit) cursorPos {
@@ -53,7 +64,7 @@ func (k Key) Same(o Key) bool {
 }
 
 func (k storedKey) key() Key {
-	return Key{Time: time.Unix(0, k.T).UTC(), Source: k.S, Seq: k.Q, Tie: k.ID}
+	return Key{Time: time.Unix(0, k.T).UTC(), Source: k.S, Seq: k.Q, Tie: k.ID, Ord: SortOrd(k.Sort)}
 }
 
 func storeKey(h Hit) storedKey {
@@ -66,7 +77,13 @@ func encodeCursor(c pageCursor) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(b) > 32<<10 {
+	// Point-in-time ids plus the open page's line identities.
+	const maxCursor = 256 << 10
+	if len(b) > maxCursor && len(c.Seen) > 0 {
+		c.Seen = trimSeen(c.Seen, len(c.Seen)/2)
+		return encodeCursor(c)
+	}
+	if len(b) > maxCursor {
 		return "", fmt.Errorf("cursor is too large")
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
@@ -76,7 +93,7 @@ func decodeCursor(s string) (pageCursor, error) {
 	if s == "" {
 		return pageCursor{}, fmt.Errorf("cursor is empty")
 	}
-	if len(s) > 48<<10 {
+	if len(s) > 384<<10 {
 		return pageCursor{}, fmt.Errorf("cursor is too large")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(s)
@@ -104,7 +121,60 @@ type lineRef struct {
 }
 
 func (r lineRef) key() Key {
-	return Key{Time: time.Unix(0, r.T).UTC(), Source: r.S, Seq: r.Q, Tie: r.ID}
+	return Key{Time: time.Unix(0, r.T).UTC(), Source: r.S, Seq: r.Q, Tie: r.ID, Ord: SortOrd(r.Sort)}
+}
+
+const maxSeen = 1500
+
+func seenOf(hits []Hit) []seenRef {
+	out := make([]seenRef, len(hits))
+	for i, h := range hits {
+		out[i] = seenRef{S: h.Source, T: h.Time.UnixNano(), Q: h.Seq, ID: h.Tie}
+	}
+	return out
+}
+
+func seenToken(s int, t, q int64, id string) string {
+	return fmt.Sprintf("%d\x1f%d\x1f%d\x1f%s", s, t, q, id)
+}
+
+func trimSeen(in []seenRef, n int) []seenRef {
+	if n < 0 {
+		n = 0
+	}
+	if len(in) <= n {
+		return in
+	}
+	// Keep the newest identities. Tail's floor is the oldest one retained,
+	// so dropping these also stops the re-read from walking the whole window.
+	cp := append([]seenRef(nil), in...)
+	sortSeen(cp)
+	return cp[:n]
+}
+
+func sortSeen(in []seenRef) {
+	// Newest first. A tiny insertion sort keeps this package off "sort" for a short list,
+	// but the cap is 1500, so use the standard library via a local comparison.
+	for i := 1; i < len(in); i++ {
+		j := i
+		for j > 0 && seenNewer(in[j], in[j-1]) {
+			in[j], in[j-1] = in[j-1], in[j]
+			j--
+		}
+	}
+}
+
+func seenNewer(a, b seenRef) bool {
+	if a.T != b.T {
+		return a.T > b.T
+	}
+	if a.S != b.S {
+		return a.S > b.S
+	}
+	if a.Q != b.Q {
+		return a.Q > b.Q
+	}
+	return a.ID > b.ID
 }
 
 func encodeLine(h Hit) string {

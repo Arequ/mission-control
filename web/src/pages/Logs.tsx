@@ -84,7 +84,8 @@ export function LogViewerPage() {
   const [params, setParams] = useSearchParams();
   const [view, setView] = useState<LogView | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
-  const [deviceId, setDeviceId] = useState(params.get("device") ?? "");
+  const deviceParam = params.get("device") ?? "";
+  const [deviceId, setDeviceId] = useState(deviceParam);
   const [win, setWin] = useState("1h");
   const [winReady, setWinReady] = useState(false);
   const [lines, setLines] = useState<LogLine[]>([]);
@@ -123,6 +124,10 @@ export function LogViewerPage() {
   }, [id]);
 
   useEffect(() => {
+    setDeviceId(deviceParam);
+  }, [deviceParam]);
+
+  useEffect(() => {
     if (!view?.device_scoped) return;
     api.devices({ limit: 200 }).then((res) => setDevices(res.devices)).catch(() => {});
   }, [view?.device_scoped]);
@@ -143,14 +148,21 @@ export function LogViewerPage() {
       const incoming = page.lines ?? [];
       const ids = new Set(current.map((line) => line.id));
       const freshLines = incoming.filter((line) => !ids.has(line.id));
-      if (mode === "prepend") {
-        adjust.current = freshLines.length * ROW;
-        const next = [...freshLines, ...current];
-        return next.length > MAX_KEPT ? next.slice(0, MAX_KEPT) : next;
+      if (mode === "append") setFresh(freshLines.map((line) => line.id));
+      const merged = mergeLines(current, freshLines);
+      let next = merged;
+      if (merged.length > MAX_KEPT) {
+        next = mode === "prepend" ? merged.slice(0, MAX_KEPT) : merged.slice(merged.length - MAX_KEPT);
       }
-      setFresh(freshLines.map((line) => line.id));
-      const next = [...current, ...freshLines];
-      return next.length > MAX_KEPT ? next.slice(next.length - MAX_KEPT) : next;
+      if (!stick.current && scroller.current && current.length > 0) {
+        const index = Math.min(current.length - 1, Math.max(0, Math.floor(scroller.current.scrollTop / ROW)));
+        const anchor = current[index];
+        const newIndex = anchor ? next.findIndex((line) => line.id === anchor.id) : -1;
+        if (newIndex >= 0) adjust.current = (newIndex - index) * ROW;
+      } else if (mode === "prepend") {
+        adjust.current = (next.length - current.length) * ROW;
+      }
+      return next;
     });
     if (mode === "prepend") {
       setHasBefore(page.has_more_before);
@@ -485,29 +497,38 @@ function windowMs(value: string) {
 }
 
 function wallToUTC(wall: string, timeZone: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(wall);
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/.exec(wall);
   if (!match) return "";
-  const [, ys, ms, ds, hs, mins] = match;
-  const y = Number(ys);
-  const m = Number(ms);
-  const d = Number(ds);
-  const h = Number(hs);
-  const min = Number(mins);
-  const guess = Date.UTC(y, m - 1, d, h, min, 0);
-  const offset = zoneOffset(guess, timeZone);
-  const corrected = guess - zoneOffset(guess - offset, timeZone);
-  return new Date(corrected).toISOString();
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  const h = Number(match[4]);
+  const min = Number(match[5]);
+  const s = Number(match[6] ?? "0");
+  const guess = Date.UTC(y, m - 1, d, h, min, s);
+  let utc = guess - zoneOffset(guess, timeZone);
+  utc = guess - zoneOffset(utc, timeZone);
+  const got = zonedParts(utc, timeZone);
+  if (got.y !== y || got.m !== m || got.d !== d || got.h !== h || got.min !== min || got.s !== s) {
+    // The wall clock does not exist (spring forward). Move ahead by the gap.
+    utc += Date.UTC(y, m - 1, d, h, min, s) - Date.UTC(got.y, got.m - 1, got.d, got.h, got.min, got.s);
+  }
+  return new Date(utc).toISOString();
 }
 
-function zoneOffset(utcMs: number, timeZone: string) {
+function zonedParts(utcMs: number, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone, hourCycle: "h23",
     year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   }).formatToParts(new Date(utcMs));
   const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
-  const asUTC = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
-  return asUTC - utcMs;
+  return { y: get("year"), m: get("month"), d: get("day"), h: get("hour") % 24, min: get("minute"), s: get("second") };
+}
+
+function zoneOffset(utcMs: number, timeZone: string) {
+  const got = zonedParts(utcMs, timeZone);
+  return Date.UTC(got.y, got.m - 1, got.d, got.h, got.min, got.s) - utcMs;
 }
 
 function formatStamp(iso: string, timeZone: string) {
@@ -519,6 +540,70 @@ function formatStamp(iso: string, timeZone: string) {
     hour: "2-digit", minute: "2-digit", second: "2-digit",
   }).formatToParts(date);
   const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  const ms = String(date.getMilliseconds()).padStart(3, "0");
-  return `${get("day")} ${get("month")} ${get("hour")}:${get("minute")}:${get("second")}.${ms}`;
+  return `${get("day")} ${get("month")} ${get("hour")}:${get("minute")}:${get("second")}.${fraction(iso)}`;
+}
+
+function fraction(iso: string) {
+  const match = /\.(\d+)/.exec(iso);
+  if (!match) return "000";
+  const digits = match[1].slice(0, 9);
+  return digits.length < 3 ? digits.padEnd(3, "0") : digits;
+}
+
+function mergeLines(current: LogLine[], fresh: LogLine[]) {
+  const out: LogLine[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < current.length && j < fresh.length) {
+    if (lineBefore(fresh[j], current[i])) out.push(fresh[j++]);
+    else out.push(current[i++]);
+  }
+  while (i < current.length) out.push(current[i++]);
+  while (j < fresh.length) out.push(fresh[j++]);
+  return out;
+}
+
+function lineBefore(a: LogLine, b: LogLine) {
+  const at = timeParts(a.timestamp);
+  const bt = timeParts(b.timestamp);
+  if (at.ms !== bt.ms) return at.ms < bt.ms;
+  if (at.frac !== bt.frac) return at.frac < bt.frac;
+  const ai = idParts(a.id);
+  const bi = idParts(b.id);
+  if (ai.s !== bi.s) return ai.s < bi.s;
+  const seq = cmpNum(ai.q, bi.q);
+  if (seq !== 0) return seq < 0;
+  return ai.tie < bi.tie;
+}
+
+function timeParts(iso: string) {
+  const date = new Date(iso);
+  const ms = Number.isNaN(date.getTime()) ? 0 : date.getTime();
+  const match = /\.(\d+)/.exec(iso);
+  const frac = (match?.[1] ?? "").padEnd(9, "0").slice(0, 9);
+  return { ms, frac };
+}
+
+function idParts(id: string) {
+  try {
+    const pad = id.replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(pad + "=".repeat((4 - (pad.length % 4)) % 4));
+    const s = Number(/"s"\s*:\s*(-?\d+)/.exec(json)?.[1] ?? "0");
+    const q = /"q"\s*:\s*(-?\d+)/.exec(json)?.[1] ?? "0";
+    const raw = /"id"\s*:\s*"((?:\\.|[^"\\])*)"/.exec(json)?.[1] ?? "";
+    return { s, q, tie: JSON.parse(`"${raw}"`) as string };
+  } catch {
+    return { s: 0, q: "0", tie: id };
+  }
+}
+
+function cmpNum(a: string, b: string) {
+  const an = a.startsWith("-");
+  const bn = b.startsWith("-");
+  if (an !== bn) return an ? -1 : 1;
+  const as = an ? a.slice(1) : a;
+  const bs = bn ? b.slice(1) : b;
+  if (as.length !== bs.length) return (as.length - bs.length) * (an ? -1 : 1);
+  if (as === bs) return 0;
+  return (as < bs ? -1 : 1) * (an ? -1 : 1);
 }

@@ -3,10 +3,8 @@ package store
 import (
 	"context"
 	"errors"
-	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/Arequ/mission-control/internal/logs"
 	"github.com/Arequ/mission-control/internal/model"
@@ -256,7 +254,7 @@ func (s *Store) prepareLoaded(ctx context.Context, stored model.LogView, deviceI
 		if base == "" {
 			return logs.View{}, nil, nil, invalid("log view has no Elasticsearch connection")
 		}
-		reader = &logs.Elastic{Base: base, APIKey: key, HTTP: &http.Client{Timeout: 15 * time.Second}}
+		reader = &logs.Elastic{Base: base, APIKey: key, HTTP: logs.SafeClient()}
 	}
 	return view, &logs.Engine{Reader: reader, Now: s.now}, bind, nil
 }
@@ -393,6 +391,9 @@ func (s *Store) normalizeLogView(ctx context.Context, in *model.LogView, reader 
 	if err := checkHTTPURL("elastic_url", in.ElasticURL); err != nil {
 		return err
 	}
+	if err := logs.ValidateElasticURL(in.ElasticURL); err != nil {
+		return invalid(err.Error())
+	}
 	if len(in.ElasticAPIKey) > 4000 {
 		return invalid("credential is too long")
 	}
@@ -450,6 +451,11 @@ func (s *Store) normalizeLogView(ctx context.Context, in *model.LogView, reader 
 		if logs.UsesPlaceholder(src.KQL) {
 			placeholders = true
 		}
+		if in.DeviceScoped {
+			if err := logs.Anchored(src.KQL); err != nil {
+				return invalid("source " + src.Label + ": " + err.Error())
+			}
+		}
 		check := src.KQL
 		if strings.Contains(check, "{{") {
 			var subErr error
@@ -472,20 +478,7 @@ func (s *Store) normalizeLogView(ctx context.Context, in *model.LogView, reader 
 }
 
 func indexOK(index string) bool {
-	if index == "" || len(index) > 200 || strings.Contains(index, "..") {
-		return false
-	}
-	for _, r := range index {
-		switch {
-		case r == '*' || r == '.' || r == '_' || r == '-' || r == '@':
-			continue
-		case r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9':
-			continue
-		default:
-			return false
-		}
-	}
-	return true
+	return logs.ValidIndexPattern(index) == nil
 }
 
 func logViewAudit(in model.LogView) map[string]any {

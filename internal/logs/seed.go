@@ -56,40 +56,39 @@ func seedHits(req SearchRequest) []Hit {
 		return nil
 	}
 	onlyErrors := strings.Contains(req.KQL, `log.level: "error"`) || strings.Contains(req.KQL, `log.level:"error"`)
+	if onlyErrors && req.Source.Label != "osquery" {
+		return nil
+	}
 	match := func(i int64) bool {
 		return !onlyErrors || seedErrorLine(req.Source.Label, i)
 	}
-	var n int64
-	for i := start; i <= end; i++ {
-		if match(i) {
-			n++
+	// Walk only as far as the page needs. Counting every index back to the
+	// epoch makes a wide context read scan hundreds of millions of steps.
+	keep := int64(req.Limit + 4)
+	var idxs []int64
+	if req.Desc || req.Before != nil {
+		for i := end; i >= start && int64(len(idxs)) < keep; i-- {
+			if match(i) {
+				idxs = append(idxs, i)
+			}
+		}
+		for l, r := 0, len(idxs)-1; l < r; l, r = l+1, r-1 {
+			idxs[l], idxs[r] = idxs[r], idxs[l]
+		}
+	} else {
+		for i := start; i <= end && int64(len(idxs)) < keep; i++ {
+			if match(i) {
+				idxs = append(idxs, i)
+			}
 		}
 	}
-	if n == 0 {
+	if len(idxs) == 0 {
 		return nil
 	}
-	keep := int64(req.Limit + 4)
-	skip := int64(0)
-	take := n
-	if n > keep {
-		take = keep
-		if req.Desc || req.Before != nil {
-			skip = n - keep
-		}
-	}
-	out := make([]Hit, 0, take)
-	var seen int64
-	for i := start; i <= end && int64(len(out)) < take; i++ {
-		if !match(i) {
-			continue
-		}
-		if seen < skip {
-			seen++
-			continue
-		}
-		seen++
+	out := make([]Hit, 0, len(idxs))
+	for _, i := range idxs {
 		ts := time.Unix(0, 0).UTC().Add(time.Duration(i) * kind.interval)
-		h := Hit{
+		out = append(out, Hit{
 			Source: req.Source.Index,
 			Time:   ts,
 			Seq:    i,
@@ -97,8 +96,7 @@ func seedHits(req SearchRequest) []Hit {
 			File:   kind.file,
 			Host:   host,
 			Msg:    kind.line(i, host, ts),
-		}
-		out = append(out, h)
+		})
 	}
 	return out
 }

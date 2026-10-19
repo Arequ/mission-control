@@ -73,10 +73,15 @@ func parseTimeString(s string, loc *time.Location) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	if n, err := strconv.ParseInt(s, 10, 64); err == nil && len(s) >= 10 {
-		return parseUnix(n, len(s))
+	if looksNumericTime(s) {
+		return parseNumericTime(s)
 	}
-	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.000000000Z07:00",
+		"2006-01-02 15:04:05Z07:00",
+	} {
 		if t, err := time.Parse(layout, s); err == nil {
 			return t.UTC()
 		}
@@ -89,54 +94,137 @@ func parseTimeString(s string, loc *time.Location) time.Time {
 		"2006-01-02 15:04:05",
 		"2006-01-02T15:04:05",
 	} {
-		if t, err := time.ParseInLocation(layout, s, loc); err == nil {
-			return t.UTC()
+		if t, ok := parseCivil(s, layout, loc); ok {
+			return t
 		}
 	}
 	return time.Time{}
+}
+
+func looksNumericTime(s string) bool {
+	if s == "" {
+		return false
+	}
+	i := 0
+	if s[0] == '-' {
+		i++
+	}
+	digits := 0
+	dot := false
+	for ; i < len(s); i++ {
+		switch {
+		case s[i] >= '0' && s[i] <= '9':
+			digits++
+		case s[i] == '.' && !dot:
+			dot = true
+		default:
+			return false
+		}
+	}
+	return digits >= 10
 }
 
 func parseNumericTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}
 	}
-	if strings.Contains(s, ".") {
-		f, err := strconv.ParseFloat(s, 64)
-		if err != nil {
-			return time.Time{}
-		}
-		return parseUnix(int64(f), digits(int64(f)))
+	neg := strings.HasPrefix(s, "-")
+	raw := strings.TrimPrefix(s, "-")
+	whole, frac, hasFrac := strings.Cut(raw, ".")
+	if whole == "" {
+		return time.Time{}
 	}
-	n, err := strconv.ParseInt(s, 10, 64)
+	n, err := strconv.ParseInt(whole, 10, 64)
 	if err != nil {
 		return time.Time{}
 	}
-	return parseUnix(n, len(strings.TrimPrefix(s, "-")))
-}
-
-func digits(n int64) int {
-	if n < 0 {
+	if neg {
 		n = -n
 	}
-	d := 1
-	for n >= 10 {
-		n /= 10
-		d++
+	base := parseUnix(n, len(whole))
+	if base.IsZero() {
+		return time.Time{}
 	}
-	return d
+	if !hasFrac || frac == "" {
+		return base
+	}
+	return base.Add(time.Duration(fracNanos(frac, unitNanos(n, len(whole)))))
+}
+
+// parseCivil reads a zoneless timestamp in loc. A clock time that exists,
+// including the repeated hour when DST falls back, uses the first instant.
+// A clock time that falls in the spring-forward gap is moved forward by the
+// skipped duration, so 02:30 in a one-hour gap is stored as 03:30.
+func parseCivil(s, layout string, loc *time.Location) (time.Time, bool) {
+	civil, err := time.Parse(layout, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	y, m, d := civil.Date()
+	h, min, sec := civil.Clock()
+	ns := civil.Nanosecond()
+	local := time.Date(y, m, d, h, min, sec, ns, loc)
+	ly, lm, ld := local.Date()
+	lh, lmin, lsec := local.Clock()
+	if ly == y && lm == m && ld == d && lh == h && lmin == min && lsec == sec && local.Nanosecond() == ns {
+		return local.UTC(), true
+	}
+	got := time.Date(ly, lm, ld, lh, lmin, lsec, local.Nanosecond(), time.UTC)
+	want := time.Date(y, m, d, h, min, sec, ns, time.UTC)
+	return local.Add(want.Sub(got)).UTC(), true
 }
 
 func parseUnix(n int64, width int) time.Time {
+	abs := n
+	if abs < 0 {
+		abs = -abs
+	}
 	switch {
-	case width >= 19:
+	case width >= 19 || abs >= 1_000_000_000_000_000_000:
 		return time.Unix(0, n).UTC()
-	case width >= 16:
+	case width >= 16 || abs >= 1_000_000_000_000_000:
 		return time.UnixMicro(n).UTC()
-	case width >= 13:
+	case width >= 11 || abs >= 100_000_000_000:
+		// 11- and 12-digit values are milliseconds from the 1970s through 2001.
+		// Reading them as seconds lands in year 5000.
 		return time.UnixMilli(n).UTC()
-	case width >= 10:
+	case width >= 10 || abs >= 1_000_000_000:
 		return time.Unix(n, 0).UTC()
 	default:
 		return time.Time{}
 	}
+}
+
+func unitNanos(n int64, width int) int64 {
+	abs := n
+	if abs < 0 {
+		abs = -abs
+	}
+	switch {
+	case width >= 19 || abs >= 1_000_000_000_000_000_000:
+		return 1
+	case width >= 16 || abs >= 1_000_000_000_000_000:
+		return int64(time.Microsecond)
+	case width >= 11 || abs >= 100_000_000_000:
+		return int64(time.Millisecond)
+	default:
+		return int64(time.Second)
+	}
+}
+
+func fracNanos(frac string, unit int64) int64 {
+	if frac == "" || unit <= 0 {
+		return 0
+	}
+	if len(frac) > 9 {
+		frac = frac[:9]
+	}
+	for len(frac) < 9 {
+		frac += "0"
+	}
+	v, err := strconv.ParseInt(frac, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v * unit / 1_000_000_000
 }

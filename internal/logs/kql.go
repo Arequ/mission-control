@@ -125,6 +125,7 @@ type kqlParser struct {
 	tokens  []token
 	i       int
 	message string
+	depth   int
 }
 
 func (p *kqlParser) peek() token { return p.tokens[p.i] }
@@ -137,7 +138,86 @@ func (p *kqlParser) next() token {
 	return t
 }
 
+const maxKQLDepth = 32
+
+const anchorSentinel = "MCDEVICEANCHOR"
+
+// Anchored reports whether every alternative in a device-scoped KQL query
+// requires a device placeholder. A branch such as `* or host.name: {{hostname}}`
+// or a negated placeholder would return other devices' lines.
+func Anchored(kql string) error {
+	if !UsesPlaceholder(kql) {
+		return fmt.Errorf("device-scoped KQL must use {{serial}}, {{hostname}}, or {{hardware_uuid}}")
+	}
+	sub, err := Substitute(kql, Bind{Serial: anchorSentinel, Hostname: anchorSentinel, HardwareUUID: anchorSentinel})
+	if err != nil {
+		return err
+	}
+	q, err := Compile(sub, "message")
+	if err != nil {
+		return err
+	}
+	if !impliesAnchor(q, anchorSentinel) {
+		return fmt.Errorf("device-scoped KQL must require the device on every branch")
+	}
+	return nil
+}
+
+func impliesAnchor(q map[string]any, sentinel string) bool {
+	if _, ok := q["match_all"]; ok {
+		return false
+	}
+	if leafAnchored(q["match_phrase"], sentinel) || leafAnchored(q["term"], sentinel) {
+		return true
+	}
+	b, ok := q["bool"].(map[string]any)
+	if !ok {
+		return false
+	}
+	if must, ok := b["must"].([]any); ok {
+		for _, c := range must {
+			child, ok := c.(map[string]any)
+			if ok && impliesAnchor(child, sentinel) {
+				return true
+			}
+		}
+	}
+	if should, ok := b["should"].([]any); ok && len(should) > 0 {
+		for _, c := range should {
+			child, ok := c.(map[string]any)
+			if !ok || !impliesAnchor(child, sentinel) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func leafAnchored(v any, sentinel string) bool {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, val := range m {
+		if val == sentinel {
+			return true
+		}
+		if inner, ok := val.(map[string]any); ok {
+			if inner["value"] == sentinel {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (p *kqlParser) parseOr() (map[string]any, error) {
+	p.depth++
+	if p.depth > maxKQLDepth {
+		return nil, fmt.Errorf("KQL is nested too deeply")
+	}
+	defer func() { p.depth-- }()
 	left, err := p.parseAnd()
 	if err != nil {
 		return nil, err
@@ -265,8 +345,14 @@ func (p *kqlParser) parseOneValue(field string) (map[string]any, error) {
 	if val.kind != tokWord && val.kind != tokString {
 		return nil, fmt.Errorf("KQL field %s needs a value", field)
 	}
-	// Quoted text is a literal even when it contains * or ?.
+	// Quoted text is a literal even when it contains * or ?. A single token is
+	// an exact term, including the field's keyword subfield, so host.name
+	// "mbp" does not also match "mbp-2" when the mapping analyzes text.
+	// A value with whitespace stays a phrase.
 	if val.kind == tokString {
+		if val.text != "" && !strings.ContainsAny(val.text, " \t") {
+			return exactField(field, val.text), nil
+		}
 		return phrase(field, val.text), nil
 	}
 	if strings.ContainsAny(val.text, "*?") {
@@ -283,6 +369,16 @@ func (p *kqlParser) parseOneValue(field string) (map[string]any, error) {
 
 func phrase(field, value string) map[string]any {
 	return map[string]any{"match_phrase": map[string]any{field: value}}
+}
+
+func exactField(field, value string) map[string]any {
+	return map[string]any{"bool": map[string]any{
+		"should": []any{
+			map[string]any{"term": map[string]any{field: map[string]any{"value": value}}},
+			map[string]any{"term": map[string]any{field + ".keyword": map[string]any{"value": value}}},
+		},
+		"minimum_should_match": 1,
+	}}
 }
 
 func fieldName(s string) bool {

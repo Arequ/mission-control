@@ -217,12 +217,20 @@ func TestDevicePlaceholderRequired(t *testing.T) {
 	v := view2()
 	v.DeviceScoped = true
 	v.Sources[0].KQL = `host.name: {{hostname}}`
+	v.Sources[1].KQL = `host.name: {{hostname}}`
 	e := engine(nil)
 	_, err := e.Run(context.Background(), RunRequest{View: v, From: time.Unix(0, 0), To: time.Unix(10, 0), Align: "end"})
 	if err == nil {
 		t.Fatal("missing device accepted")
 	}
-	v.Sources[0].KQL = `host.name: {{hostname}}`
+	v.Sources[1].KQL = ""
+	_, err = e.Run(context.Background(), RunRequest{
+		View: v, Bind: &Bind{Hostname: "mbp"}, From: time.Unix(0, 0), To: time.Unix(10, 0), Align: "end",
+	})
+	if err == nil {
+		t.Fatal("unfiltered source accepted on a device-scoped view")
+	}
+	v.Sources[1].KQL = `host.name: {{hostname}}`
 	_, err = e.Run(context.Background(), RunRequest{
 		View: v, Bind: &Bind{Hostname: "a\" OR *"}, From: time.Unix(0, 0), To: time.Unix(10, 0), Align: "end",
 	})

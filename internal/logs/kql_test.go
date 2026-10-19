@@ -16,8 +16,11 @@ func TestCompileKQLSubset(t *testing.T) {
 	if strings.Contains(text, "query_string") {
 		t.Fatalf("query_string leaked into %s", text)
 	}
-	if !strings.Contains(text, "match_phrase") || !strings.Contains(text, "must_not") || !strings.Contains(text, "should") {
+	if !strings.Contains(text, `"term"`) || !strings.Contains(text, "must_not") || !strings.Contains(text, "should") {
 		t.Fatalf("structure: %s", text)
+	}
+	if strings.Contains(text, "match_phrase") {
+		t.Fatalf("single-token field values must be exact terms: %s", text)
 	}
 }
 

@@ -450,6 +450,10 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if strings.Contains(apiGet(t, ts.URL, "/api/v1/osquery/queries"), "launch_daemons") {
 		t.Fatal("osquery query survived destroy")
 	}
+	viewsLeft := apiGet(t, ts.URL, "/api/v1/log-views")
+	if strings.Contains(viewsLeft, "Endpoint logs") || strings.Contains(viewsLeft, "AutoPKG run log") {
+		t.Fatalf("log views survived destroy: %s", viewsLeft)
+	}
 	settings = apiGet(t, ts.URL, "/api/v1/pipeline-settings")
 	if !strings.Contains(settings, `"max_concurrency":4`) && !strings.Contains(settings, `"max_concurrency": 4`) {
 		t.Fatalf("destroy should reset pipeline concurrency to the default: %s", settings)
