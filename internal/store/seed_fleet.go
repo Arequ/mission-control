@@ -19,7 +19,14 @@ func (s *Store) seedFleet(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		return nil
+		var connectors int
+		if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM source_connectors`).Scan(&connectors); err != nil {
+			return err
+		}
+		if connectors > 0 {
+			return nil
+		}
+		return s.seedCoverage(ctx)
 	}
 	p := model.Principal{Kind: "system", ID: "seed", Name: "seed"}
 	if _, err := s.CreateEnrollSecret(ctx, p, model.EnrollSecret{
@@ -168,7 +175,7 @@ func (s *Store) seedFleet(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return s.seedCoverage(ctx)
 }
 
 func (s *Store) seedDeviceApps(ctx context.Context, deviceID string, i int) error {

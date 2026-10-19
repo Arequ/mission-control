@@ -91,6 +91,119 @@ resource "missioncontrol_osquery_query" "launch_daemons" {
   scheduled   = false
 }
 
+locals {
+  # Event fields already shipped to Elasticsearch, mapped onto normalized device fields.
+  security_field_map = {
+    native_id     = "agent.id"
+    serial        = "host.serial_number"
+    hardware_uuid = "host.id"
+    mac           = "host.mac"
+    hostname      = "host.name"
+    primary_user  = "user.email"
+    os_version    = "host.os.version"
+    ip_address    = "host.ip"
+    agent_version = "agent.version"
+    last_seen     = "@timestamp"
+  }
+}
+
+resource "missioncontrol_source_connector" "osquery" {
+  name                 = "osquery"
+  source               = "osquery"
+  mode                 = "native"
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "munki" {
+  name                 = "munki"
+  source               = "munki"
+  mode                 = "native"
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "crowdstrike" {
+  name                 = "crowdstrike"
+  source               = "crowdstrike"
+  mode                 = "api"
+  base_url             = "https://api.crowdstrike.com"
+  client_id            = "example-crowdstrike-client"
+  client_secret        = var.crowdstrike_client_secret
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "kolide" {
+  name                 = "kolide"
+  source               = "kolide"
+  mode                 = "api"
+  base_url             = "https://k2.kolide.com"
+  api_token            = var.kolide_api_token
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "rapid7" {
+  name                 = "rapid7"
+  source               = "rapid7"
+  mode                 = "elastic"
+  elastic_url          = "https://elasticsearch.example.invalid"
+  elastic_api_key      = var.elastic_api_key
+  index_pattern        = "logs-rapid7.insight-*"
+  query_language       = "kql"
+  query                = "event.dataset:\"rapid7.insight\""
+  time_field           = "@timestamp"
+  field_map            = local.security_field_map
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "netskope" {
+  name                 = "netskope"
+  source               = "netskope"
+  mode                 = "elastic"
+  elastic_url          = "https://elasticsearch.example.invalid"
+  elastic_api_key      = var.elastic_api_key
+  index_pattern        = "logs-netskope.events-*"
+  query_language       = "kql"
+  query                = "event.dataset:\"netskope.events\""
+  time_field           = "@timestamp"
+  field_map            = local.security_field_map
+  stale_after_seconds  = 604800
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "proofpoint" {
+  name                 = "proofpoint"
+  source               = "proofpoint"
+  mode                 = "elastic"
+  elastic_url          = "https://elasticsearch.example.invalid"
+  elastic_api_key      = var.elastic_api_key
+  index_pattern        = "logs-proofpoint.endpoint-*"
+  query_language       = "kql"
+  query                = "event.dataset:\"proofpoint.endpoint\""
+  time_field           = "@timestamp"
+  field_map            = local.security_field_map
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
+resource "missioncontrol_source_connector" "blastshield" {
+  name                 = "blastshield"
+  source               = "blastshield"
+  mode                 = "elastic"
+  elastic_url          = "https://elasticsearch.example.invalid"
+  elastic_api_key      = var.elastic_api_key
+  index_pattern        = "logs-blastshield.agent-*"
+  query_language       = "kql"
+  query                = "event.dataset:\"blastshield.agent\""
+  time_field           = "@timestamp"
+  field_map            = local.security_field_map
+  stale_after_seconds  = 86400
+  interval_seconds     = 86400
+}
+
 resource "missioncontrol_osquery_pack" "endpoint" {
   name        = "endpoint"
   description = "Endpoint checks for Apple silicon Macs"

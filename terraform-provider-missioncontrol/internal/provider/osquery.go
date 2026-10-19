@@ -461,45 +461,50 @@ func (r *enrollSecretResource) Configure(_ context.Context, req resource.Configu
 }
 
 type enrollSecretModel struct {
-	ID        types.String `tfsdk:"id"`
-	Name      types.String `tfsdk:"name"`
-	Secret    types.String `tfsdk:"secret"`
-	Enabled   types.Bool   `tfsdk:"enabled"`
-	ManagedBy types.String `tfsdk:"managed_by"`
+	ID                types.String `tfsdk:"id"`
+	Name              types.String `tfsdk:"name"`
+	Secret            types.String `tfsdk:"secret"`
+	Enabled           types.Bool   `tfsdk:"enabled"`
+	ManagedBy         types.String `tfsdk:"managed_by"`
+	SecretFingerprint types.String `tfsdk:"secret_fingerprint"`
 }
 
 func (r *enrollSecretResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An osquery enroll secret. The API stores only a hash. Keep more than one enabled secret while rotating so already-issued instructions and new agents overlap. Enrolled nodes keep their node key until it is invalidated.",
+		Description: "An osquery enroll secret. The API stores only a hash. Keep more than one enabled secret while rotating so already-issued instructions and new agents overlap. Enrolled nodes keep their node key until it is invalidated. secret is write-only: it is sent on create and update, never stored in state, and never returned by the API. Import leaves secret_fingerprint null, so import does not plan an update.",
 		Attributes: map[string]schema.Attribute{
-			"id":         schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"name":       schema.StringAttribute{Required: true},
-			"secret":     schema.StringAttribute{Required: true, Sensitive: true, Description: "Sensitive. The API never returns it. Plans show (sensitive value), never the raw secret. Changing it rotates the hash."},
-			"enabled":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
-			"managed_by": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
+			"id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"name":               schema.StringAttribute{Required: true},
+			"secret":             schema.StringAttribute{Required: true, Sensitive: true, WriteOnly: true, Description: "Write-only. The API stores a hash and never returns the value. Changing it after create rotates the hash. Import does not plan an update."},
+			"enabled":            schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
+			"managed_by":         schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
+			"secret_fingerprint": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}, Description: "SHA-256 of the configured secret. Null after import."},
 		},
 	}
 }
 
-func modelEnrollSecret(in enrollSecretAPI, secret types.String) enrollSecretModel {
+func modelEnrollSecret(in enrollSecretAPI, fingerprint types.String) enrollSecretModel {
 	return enrollSecretModel{
-		ID: types.StringValue(in.ID), Name: types.StringValue(in.Name), Secret: secret,
+		ID: types.StringValue(in.ID), Name: types.StringValue(in.Name),
 		Enabled: types.BoolValue(in.Enabled), ManagedBy: types.StringValue(in.ManagedBy),
+		SecretFingerprint: fingerprint,
 	}
 }
 
 func (r *enrollSecretResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan enrollSecretModel
+	var plan, cfg enrollSecretModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.CreateEnrollSecret(ctx, enrollSecretAPI{Name: plan.Name.ValueString(), Secret: plan.Secret.ValueString(), Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
+	secret := configuredSecret(cfg.Secret)
+	out, err := r.client.CreateEnrollSecret(ctx, enrollSecretAPI{Name: plan.Name.ValueString(), Secret: secret, Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
 	if err != nil {
 		resp.Diagnostics.AddError("create enroll secret", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, modelEnrollSecret(out, plan.Secret))...)
+	resp.Diagnostics.Append(resp.State.Set(ctx, modelEnrollSecret(out, types.StringValue(credentialFingerprint(secret))))...)
 }
 func (r *enrollSecretResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state enrollSecretModel
@@ -516,20 +521,30 @@ func (r *enrollSecretResource) Read(ctx context.Context, req resource.ReadReques
 		resp.Diagnostics.AddError("read enroll secret", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, modelEnrollSecret(out, state.Secret))...)
+	fingerprint := types.StringNull()
+	if !state.SecretFingerprint.IsNull() && !state.SecretFingerprint.IsUnknown() {
+		fingerprint = state.SecretFingerprint
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, modelEnrollSecret(out, fingerprint))...)
 }
 func (r *enrollSecretResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan enrollSecretModel
+	var plan, cfg enrollSecretModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.UpdateEnrollSecret(ctx, plan.ID.ValueString(), enrollSecretAPI{Name: plan.Name.ValueString(), Secret: plan.Secret.ValueString(), Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
+	secret := configuredSecret(cfg.Secret)
+	out, err := r.client.UpdateEnrollSecret(ctx, plan.ID.ValueString(), enrollSecretAPI{Name: plan.Name.ValueString(), Secret: secret, Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
 	if err != nil {
 		resp.Diagnostics.AddError("update enroll secret", err.Error())
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, modelEnrollSecret(out, plan.Secret))...)
+	fingerprint := plan.SecretFingerprint
+	if fingerprint.IsNull() || fingerprint.IsUnknown() {
+		fingerprint = types.StringValue(credentialFingerprint(secret))
+	}
+	resp.Diagnostics.Append(resp.State.Set(ctx, modelEnrollSecret(out, fingerprint))...)
 }
 func (r *enrollSecretResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state enrollSecretModel
@@ -543,4 +558,28 @@ func (r *enrollSecretResource) Delete(ctx context.Context, req resource.DeleteRe
 }
 func (r *enrollSecretResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
+}
+
+func (r *enrollSecretResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var cfg, plan enrollSecretModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	plan.Secret = types.StringNull()
+	prior := types.StringNull()
+	if !req.State.Raw.IsNull() {
+		var state enrollSecretModel
+		resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		prior = state.SecretFingerprint
+	}
+	plan.SecretFingerprint = nextFingerprint(req.State.Raw.IsNull(), prior, []types.String{cfg.Secret})
+	resp.Diagnostics.Append(resp.Plan.Set(ctx, plan)...)
 }

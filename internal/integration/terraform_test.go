@@ -177,6 +177,48 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if !strings.Contains(secrets, "fleet") || strings.Contains(secrets, "example-enroll-secret") {
 		t.Fatalf("enroll secrets: %s", secrets)
 	}
+	connectors := apiGet(t, ts.URL, "/api/v1/source-connectors")
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret"} {
+		if strings.Contains(connectors, leak) {
+			t.Fatalf("connector response leaked %s: %s", leak, connectors)
+		}
+	}
+	if !strings.Contains(connectors, `"source":"crowdstrike"`) && !strings.Contains(connectors, `"source": "crowdstrike"`) {
+		t.Fatalf("connectors: %s", connectors)
+	}
+	var listedConnectors struct {
+		Connectors []struct {
+			ID     string `json:"id"`
+			Source string `json:"source"`
+		} `json:"connectors"`
+	}
+	if err := json.Unmarshal([]byte(connectors), &listedConnectors); err != nil {
+		t.Fatal(err)
+	}
+	var connectorID string
+	for _, c := range listedConnectors.Connectors {
+		if c.Source == "crowdstrike" {
+			connectorID = c.ID
+		}
+	}
+	if connectorID == "" {
+		t.Fatal("crowdstrike connector missing")
+	}
+	run("state", "rm", "missioncontrol_source_connector.crowdstrike")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_source_connector.crowdstrike", connectorID)
+	importedConnector := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	connOut, connErr := importedConnector.CombinedOutput()
+	if strings.Contains(string(connOut), "example-crowdstrike-client-secret") || strings.Contains(string(connOut), "example-enroll-secret") {
+		t.Fatalf("credential leaked in plan:\n%s", connOut)
+	}
+	if connErr != nil {
+		t.Fatalf("imported connector should not plan an update: %v\n%s", connErr, connOut)
+	}
 	var listedQ struct {
 		Queries []struct {
 			ID   string `json:"id"`
@@ -315,8 +357,11 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if strings.Contains(string(out), "example-enroll-secret") {
 		t.Fatalf("enroll secret leaked in plan:\n%s", out)
 	}
-	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "(sensitive value)") {
-		t.Fatalf("imported enroll secret should plan a redacted update, err=%v\n%s", err, out)
+	if err != nil {
+		t.Fatalf("imported enroll secret should not plan an update, err=%v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "example-crowdstrike-client-secret") || strings.Contains(string(out), "example-kolide-api-token") || strings.Contains(string(out), "example-elastic-api-key") {
+		t.Fatalf("connector credential leaked in plan:\n%s", out)
 	}
 
 	if _, err := st.Pool().Exec(ctx, `UPDATE osquery_queries SET sql='SELECT 1' WHERE name='launch_daemons'`); err != nil {

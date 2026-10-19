@@ -108,9 +108,10 @@ type Device struct {
 	CreatedAt        time.Time    `json:"created_at"`
 	UpdatedAt        time.Time    `json:"updated_at"`
 	Status           string       `json:"status,omitempty"`
-	Labels           []string     `json:"labels,omitempty"`
-	Apps             []DeviceApp  `json:"apps,omitempty"`
-	Events           []AuditEntry `json:"events,omitempty"`
+	Labels           []string        `json:"labels,omitempty"`
+	Apps             []DeviceApp     `json:"apps,omitempty"`
+	Events           []AuditEntry    `json:"events,omitempty"`
+	Coverage         *DeviceCoverage `json:"coverage,omitempty"`
 }
 
 // DeviceApp is one installed application from the latest inventory snapshot.

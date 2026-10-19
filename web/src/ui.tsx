@@ -49,6 +49,7 @@ export function Providers({ children }: { children: ReactNode }) {
 function section(path: string) {
   if (path.startsWith("/munki")) return "munki";
   if (path.startsWith("/settings")) return "settings";
+  if (path.startsWith("/coverage")) return "coverage";
   if (path.startsWith("/devices")) return "devices";
   if (path.startsWith("/queries")) return "queries";
   if (path.startsWith("/autopkg") || path.startsWith("/runs") || path.startsWith("/runners")) return "autopkg";
@@ -137,6 +138,8 @@ export function Layout() {
           <SideLink id="overview" to="/" icon="layout" label="Overview" active={active === "overview"} end />
           <SideLink id="devices" to="/devices" icon="laptop" label="Devices" count={counts.devices ? String(counts.devices) : ""} active={active === "devices"} />
           <SideLink id="queries" to="/queries" icon="terminal" label="Queries" active={active === "queries"} />
+          <div className="side-h" style={{ marginTop: 14 }}>Security</div>
+          <SideLink id="coverage" to="/coverage" icon="shield" label="Security Coverage" active={active === "coverage"} />
           <div className="side-h" style={{ marginTop: 14 }}>Software</div>
           <SideLink id="munki" to="/munki" icon="package" label="Munki" count={counts.packages ? String(counts.packages) : ""} active={active === "munki"} />
           <SideLink id="autopkg" to="/autopkg" icon="workflow" label="AutoPKG" count={counts.recipes ? String(counts.recipes) : ""} active={active === "autopkg"} />

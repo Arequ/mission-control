@@ -88,6 +88,7 @@ func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
 		newOsqueryPackResource,
 		newOsqueryLabelResource,
 		newEnrollSecretResource,
+		newSourceConnectorResource,
 	}
 }
 
