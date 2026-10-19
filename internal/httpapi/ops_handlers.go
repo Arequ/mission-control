@@ -1,0 +1,469 @@
+package httpapi
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"path"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Arequ/mission-control/internal/model"
+	"github.com/Arequ/mission-control/internal/munki"
+	"github.com/Arequ/mission-control/internal/storage"
+)
+
+func (s *Server) listRunners(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListRunners(r.Context(), s.offlineAfter)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"runners": items})
+}
+
+func (s *Server) deleteRunner(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteRunner(r.Context(), principal(r), r.PathValue("id")); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	items, total, err := s.store.ListJobs(r.Context(), r.URL.Query().Get("recipe_id"), limit, offset)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": items, "limit": limit, "offset": offset, "total": total})
+}
+
+func (s *Server) enqueueJob(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		RecipeID string `json:"recipe_id"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	job, err := s.store.EnqueueManual(r.Context(), principal(r), in.RecipeID)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, job)
+}
+
+func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
+	job, err := s.store.GetJob(r.Context(), r.PathValue("id"), true)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) listCatalogs(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListCatalogs(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"catalogs": items})
+}
+
+func (s *Server) listPackages(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListPackages(r.Context(), r.URL.Query().Get("catalog"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"packages": items})
+}
+
+func (s *Server) getPackage(w http.ResponseWriter, r *http.Request) {
+	item, err := s.store.GetPackage(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) promotePackage(w http.ResponseWriter, r *http.Request) {
+	item, err := s.store.PromotePackage(r.Context(), principal(r), r.PathValue("id"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, item)
+}
+
+func (s *Server) runPromotions(w http.ResponseWriter, r *http.Request) {
+	n, err := s.store.PromoteDue(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"promoted": n})
+}
+
+type registerIn struct {
+	Name           string   `json:"name"`
+	Labels         []string `json:"labels"`
+	Pool           string   `json:"pool"`
+	Hostname       string   `json:"hostname"`
+	OSVersion      string   `json:"os_version"`
+	AutopkgVersion string   `json:"autopkg_version"`
+}
+
+func (s *Server) registerRunner(w http.ResponseWriter, r *http.Request) {
+	var in registerIn
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	rn, token, err := s.store.RegisterRunner(r.Context(), principal(r), in.Name, in.Labels, in.Pool, in.Hostname, in.OSVersion, in.AutopkgVersion)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"runner": rn, "token": token})
+}
+
+func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Hostname       string `json:"hostname"`
+		OSVersion      string `json:"os_version"`
+		AutopkgVersion string `json:"autopkg_version"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	p := principal(r)
+	if err := s.store.Heartbeat(r.Context(), p.ID, in.Hostname, in.OSVersion, in.AutopkgVersion); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) lease(w http.ResponseWriter, r *http.Request) {
+	wait := 20 * time.Second
+	if r.URL.Query().Get("wait") == "0" {
+		wait = 0
+	}
+	if v := r.URL.Query().Get("wait_seconds"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 60 {
+			wait = time.Duration(n) * time.Second
+		}
+	}
+	deadline := time.Now().Add(wait)
+	p := principal(r)
+	for {
+		lease, err := s.store.Lease(r.Context(), p.ID)
+		if err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		if lease != nil {
+			writeJSON(w, http.StatusOK, lease)
+			return
+		}
+		if time.Now().After(deadline) || r.Context().Err() != nil {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			w.WriteHeader(http.StatusNoContent)
+			return
+		case <-time.After(400 * time.Millisecond):
+		}
+	}
+}
+
+func (s *Server) appendLogs(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Attempt int             `json:"attempt"`
+		Lines   []model.LogLine `json:"lines"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	if in.Attempt <= 0 {
+		writeJSON(w, http.StatusBadRequest, errBody{"attempt is required"})
+		return
+	}
+	if err := s.store.AppendLogs(r.Context(), r.PathValue("id"), principal(r).ID, in.Attempt, in.Lines); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) renew(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Attempt int `json:"attempt"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	if in.Attempt <= 0 {
+		writeJSON(w, http.StatusBadRequest, errBody{"attempt is required"})
+		return
+	}
+	exp, err := s.store.RenewLease(r.Context(), r.PathValue("id"), principal(r).ID, in.Attempt)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"lease_expires_at": exp})
+}
+
+func (s *Server) uploadArtifact(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	jobID := r.PathValue("id")
+	if r.ContentLength > s.maxUpload {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errBody{"upload exceeds the size limit"})
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload)
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) || strings.Contains(err.Error(), "request body too large") {
+			writeJSON(w, http.StatusRequestEntityTooLarge, errBody{"upload exceeds the size limit"})
+			return
+		}
+		writeJSON(w, http.StatusBadRequest, errBody{"expected multipart pkginfo and package"})
+		return
+	}
+	attempt, _ := strconv.Atoi(r.FormValue("attempt"))
+	if attempt <= 0 {
+		writeJSON(w, http.StatusBadRequest, errBody{"attempt is required"})
+		return
+	}
+	pi, _, err := r.FormFile("pkginfo")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody{"missing pkginfo"})
+		return
+	}
+	defer pi.Close()
+	pkg, hdr, err := r.FormFile("package")
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody{"missing package"})
+		return
+	}
+	defer pkg.Close()
+	piBytes, err := io.ReadAll(io.LimitReader(pi, 8<<20))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	info, err := munki.ParsePkginfo(piBytes)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errBody{err.Error()})
+		return
+	}
+	pkgBytes, err := io.ReadAll(io.LimitReader(pkg, s.maxUpload))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	filename := ""
+	if hdr != nil {
+		filename = hdr.Filename
+	}
+	if strings.ContainsAny(filename, "/\\\x00") || strings.Contains(filename, "..") || filename == "." {
+		writeJSON(w, http.StatusBadRequest, errBody{"invalid package filename"})
+		return
+	}
+	filename = path.Base(filename)
+	if filename == "." || filename == "/" || filename == "" {
+		filename = safeFallbackName(fmtString(info["name"]), fmtString(info["version"]))
+	}
+	catalog, err := s.store.ImportCatalog(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	munki.ApplyArtifact(info, filename, pkgBytes, catalog)
+	raw, err := munki.MarshalPkginfo(info)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	job, err := s.store.GetJob(r.Context(), jobID, false)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	jid := jobID
+	inserted, imported, err := s.store.InsertOwnedPackage(r.Context(), p, p.ID, jobID, attempt, model.Package{
+		Name: fmtString(info["name"]), Version: fmtString(info["version"]), Catalog: catalog,
+		Filename: filename, Pkginfo: raw, JobID: &jid, RecipeIdentifier: job.RecipeIdentifier,
+	})
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	key := "pkgs/" + inserted.Filename
+	// Write bytes only after the row is claimed. A conflicting name/version never reaches this,
+	// so an existing object is not replaced with different bytes. Same-hash retries heal a missing object.
+	if imported || installerHashMatches(inserted.Pkginfo, info["installer_item_hash"]) {
+		if err := s.blobs.Put(r.Context(), key, bytes.NewReader(pkgBytes), int64(len(pkgBytes)), "application/octet-stream"); err != nil {
+			if imported {
+				_ = s.store.DeletePackage(r.Context(), inserted.ID)
+			}
+			s.log.Error("storage put", "err", err)
+			writeJSON(w, http.StatusInternalServerError, errBody{"storage write failed"})
+			return
+		}
+	}
+	res := model.ImportResult{Imported: imported, Package: &inserted}
+	if !imported {
+		res.Reason = "already_exists"
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func fmtString(v any) string {
+	s, _ := v.(string)
+	return s
+}
+
+func safeFallbackName(name, version string) string {
+	var b strings.Builder
+	for _, r := range name + "-" + version {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '+' || r == '-' {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	if out == "" {
+		return "package.pkg"
+	}
+	return out + ".pkg"
+}
+
+func installerHashMatches(raw []byte, hash any) bool {
+	want, _ := hash.(string)
+	if want == "" {
+		return false
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	got, _ := m["installer_item_hash"].(string)
+	return strings.EqualFold(got, want)
+}
+
+func (s *Server) completeJob(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Attempt int    `json:"attempt"`
+		Result  string `json:"result"`
+		Error   string `json:"error"`
+	}
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	if in.Attempt <= 0 {
+		writeJSON(w, http.StatusBadRequest, errBody{"attempt is required"})
+		return
+	}
+	job, err := s.store.CompleteJob(r.Context(), r.PathValue("id"), principal(r).ID, in.Attempt, in.Result, in.Error)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func safeRepoSegment(name string) bool {
+	if name == "" || name == "." || strings.ContainsAny(name, "/\\\x00") || strings.Contains(name, "..") {
+		return false
+	}
+	return path.Clean(name) == name
+}
+
+func (s *Server) serveRepo(w http.ResponseWriter, r *http.Request) {
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/repo/catalogs/"):
+		name := strings.TrimPrefix(r.URL.Path, "/repo/catalogs/")
+		name = strings.TrimSuffix(name, ".plist")
+		if !safeRepoSegment(name) {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid path"})
+			return
+		}
+		body, err := s.store.CatalogBody(r.Context(), name)
+		if err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(body)
+	case strings.HasPrefix(r.URL.Path, "/repo/manifests/"):
+		name := strings.TrimPrefix(r.URL.Path, "/repo/manifests/")
+		name = strings.TrimSuffix(name, ".plist")
+		if !safeRepoSegment(name) {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid path"})
+			return
+		}
+		m, err := s.store.GetManifestByName(r.Context(), name)
+		if err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		body, err := munki.ManifestPlist(m.Catalogs, m.IncludedManifests, m.ManagedInstalls, m.OptionalInstalls, m.ManagedUninstalls)
+		if err != nil {
+			s.writeStoreErr(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		_, _ = w.Write(body)
+	case strings.HasPrefix(r.URL.Path, "/repo/pkgs/"):
+		rel := strings.TrimPrefix(r.URL.Path, "/repo/pkgs/")
+		rel = strings.TrimPrefix(path.Clean("/"+rel), "/")
+		if strings.Contains(rel, "/") || storage.ValidateKey("pkgs/"+rel) != nil {
+			writeJSON(w, http.StatusBadRequest, errBody{"invalid path"})
+			return
+		}
+		rc, err := s.blobs.Open(r.Context(), "pkgs/"+rel)
+		if err != nil {
+			if err == storage.ErrNotFound {
+				writeJSON(w, http.StatusNotFound, errBody{"not found"})
+				return
+			}
+			s.log.Error("storage open", "err", err)
+			writeJSON(w, http.StatusInternalServerError, errBody{"storage read failed"})
+			return
+		}
+		defer rc.Close()
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = io.Copy(w, rc)
+	default:
+		http.NotFound(w, r)
+	}
+}
