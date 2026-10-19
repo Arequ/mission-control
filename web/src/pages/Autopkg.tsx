@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Pipeline, type Recipe, type Schedule } from "../api";
-import { Empty, Managed, StatusPill, when } from "../ui";
+import { AutopkgSeg, Empty, Managed, Mark, Page, StatusPill, Toolbar, enterStyle, match, useSearch, when } from "../ui";
 
 export function AutopkgPage() {
   const navigate = useNavigate();
+  const { q } = useSearch();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [pipeline, setPipeline] = useState<Pipeline | null>(null);
@@ -22,71 +23,77 @@ export function AutopkgPage() {
           setPipeline(p);
           setError("");
         })
-        .catch((err: Error) => {
-          if (!stop) setError(err.message);
-        });
+        .catch((err: Error) => { if (!stop) setError(err.message); });
     };
     load();
     const t = setInterval(load, 4000);
-    return () => {
-      stop = true;
-      clearInterval(t);
-    };
+    return () => { stop = true; clearInterval(t); };
   }, []);
 
   const cronFor = (id: string) => schedules.find((s) => s.recipe_id === id && s.enabled)?.cron;
+  const shown = recipes.filter((recipe) => match(q, recipe.name, recipe.identifier, cronFor(recipe.id)));
 
   return (
-    <>
-      <h1>AutoPkg</h1>
-      <p className="lede">Recipes, schedules, and pipeline limits are applied by Terraform. This page only shows status and lets you start a run.</p>
-      {error && <p className="lede">{error}</p>}
-      {pipeline && (
-        <div className="panel strip">
-          <span><strong>{pipeline.max_concurrency}</strong> at once</span>
-          <span><strong>{pipeline.per_runner_parallelism}</strong> per runner</span>
-          <span><strong>{pipeline.timeout_seconds}s</strong> timeout</span>
-          <span><strong>{pipeline.max_retries}</strong> retries</span>
-          <span><strong>{pipeline.lease_seconds}s</strong> lease</span>
-          <Managed />
-        </div>
-      )}
-      <div className="panel">
-        {recipes.length === 0 ? (
-          <Empty>No recipes yet. They appear when Terraform applies.</Empty>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Recipe</th>
-                <th>Schedule</th>
-                <th>Last run</th>
-                <th></th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {recipes.map((recipe) => (
-                <tr key={recipe.id}>
-                  <td>
-                    <div className="name">{recipe.name}</div>
-                    <div className="sub">{recipe.identifier}{recipe.enabled ? "" : " · disabled"}</div>
-                  </td>
-                  <td className="sub">{cronFor(recipe.id) ?? "—"}</td>
-                  <td>
+    <Page>
+      <Toolbar
+        title="AutoPKG"
+        badge
+        lede="Recipes, schedules, and limits are applied by Terraform. Run now is the only action here."
+        extra={<AutopkgSeg />}
+      />
+      <div className="content">
+        {error ? <p className="note">{error}</p> : null}
+        {pipeline ? (
+          <section className="card enter" style={enterStyle(0)}>
+            <div className="card-h">
+              <span className="card-t">Pipeline</span>
+              {pipeline.managed_by === "terraform" ? <Managed small /> : null}
+              <span className="faint" style={{ marginLeft: "auto" }}>Lease {pipeline.lease_seconds}s</span>
+            </div>
+            <div className="stats">
+              <Stat value={String(pipeline.max_concurrency)} label="At once" />
+              <Stat value={String(pipeline.per_runner_parallelism)} label="Per runner" />
+              <Stat value={`${pipeline.timeout_seconds}s`} label="Timeout" />
+              <Stat value={String(pipeline.max_retries)} label="Retries" />
+            </div>
+          </section>
+        ) : null}
+        <section className="card enter" style={enterStyle(1)}>
+          <div className="card-h">
+            <span className="card-t">Recipes</span>
+            <span className="faint">{shown.length}</span>
+          </div>
+          {shown.length === 0 ? (
+            <Empty>{recipes.length === 0 ? "No recipes yet. They appear when Terraform applies." : "Nothing matches."}</Empty>
+          ) : (
+            <>
+              <div className="list-h cols-recipe">
+                <span>Recipe</span><span>Schedule</span><span>Last run</span><span></span><span></span>
+              </div>
+              {shown.map((recipe, index) => (
+                <div key={recipe.id} className="row cols-recipe enter" style={enterStyle(index)}>
+                  <span className="wash" />
+                  <div className="who">
+                    <Mark name={recipe.name} />
+                    <div className="id">
+                      <div className="name">{recipe.name}{recipe.enabled ? "" : " · disabled"}</div>
+                      <div className="subline mono">{recipe.identifier}</div>
+                    </div>
+                  </div>
+                  <div className="mono muted">{cronFor(recipe.id) ?? "—"}</div>
+                  <div>
                     {recipe.last_job ? (
                       <Link to={`/runs/${recipe.last_job.id}`}>
                         <StatusPill status={recipe.last_job.status} result={recipe.last_job.result} />
                       </Link>
-                    ) : (
-                      <span className="sub">no runs</span>
-                    )}
-                    <div className="sub">{when(recipe.last_job?.finished_at || recipe.last_job?.created_at)}</div>
-                  </td>
-                  <td>{recipe.managed_by === "terraform" ? <Managed /> : <span className="pill">{recipe.managed_by}</span>}</td>
-                  <td>
+                    ) : <span className="faint">No runs</span>}
+                    <div className="subline">{when(recipe.last_job?.finished_at || recipe.last_job?.created_at)}</div>
+                  </div>
+                  <div>{recipe.managed_by === "terraform" ? <Managed small /> : <span className="pill gray">{recipe.managed_by}</span>}</div>
+                  <div className="end">
                     <button
-                      className="btn quiet"
+                      className="capsule primary"
+                      type="button"
                       disabled={!recipe.enabled || busy === recipe.id}
                       onClick={() => {
                         setBusy(recipe.id);
@@ -98,13 +105,22 @@ export function AutopkgPage() {
                     >
                       Run now
                     </button>
-                  </td>
-                </tr>
+                  </div>
+                </div>
               ))}
-            </tbody>
-          </table>
-        )}
+            </>
+          )}
+        </section>
       </div>
-    </>
+    </Page>
+  );
+}
+
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div className="stat">
+      <b className="tnum">{value}</b>
+      <span>{label}</span>
+    </div>
   );
 }

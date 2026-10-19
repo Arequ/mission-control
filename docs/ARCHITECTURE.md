@@ -112,7 +112,7 @@ The example manifest `testing` lists both the `testing` and `production` catalog
 
 ## UI
 
-The UI is a Vite, React, and TypeScript app with no component library. The server serves `web/dist` from the same origin. Pages are Recipes, Runs, Run detail (plain log), Runners, Catalogs, and Manifests. Config rows show a Managed by Terraform indicator and are not editable. Run now is the only mutation.
+The UI is a Vite, React, and TypeScript app with no component library. The server serves `web/dist` from the same origin. Pages are Recipes, Runs, Run detail (plain log), Runners, Catalogs, Manifests, and Settings. Config shows a violet Managed by Terraform badge and is not editable. Run now is the only mutation. Visual tokens (type, color, radii, frosted shell, cards, pills) follow the approved mockups. Motion is CSS on `transform` and `opacity` only: page enter, staggered rows, a sliding sidebar indicator, soak bars via `scaleX`, and a View Transitions crossfade for light and dark. `prefers-reduced-motion` disables it.
 
 ## Kubernetes
 

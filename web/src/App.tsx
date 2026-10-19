@@ -1,17 +1,25 @@
 import { FormEvent, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { getToken, setToken } from "./api";
+import { Icon } from "./icons";
 import { AutopkgPage } from "./pages/Autopkg";
 import { ManifestsPage, MunkiPage } from "./pages/Munki";
-import { RunDetailPage, RunsPage } from "./pages/Runs";
 import { RunnersPage } from "./pages/Runners";
-import { Layout } from "./ui";
+import { RunDetailPage, RunsPage } from "./pages/Runs";
+import { SettingsPage } from "./pages/Settings";
+import { Layout, Providers, useTheme } from "./ui";
 
 export function App() {
+  return (
+    <Providers>
+      <Authed />
+    </Providers>
+  );
+}
+
+function Authed() {
   const [authed, setAuthed] = useState(getToken() !== "");
-  if (!authed) {
-    return <Login onDone={() => setAuthed(true)} />;
-  }
+  if (!authed) return <Login onDone={() => setAuthed(true)} />;
   return (
     <Routes>
       <Route element={<Layout />}>
@@ -21,6 +29,7 @@ export function App() {
         <Route path="runners" element={<RunnersPage />} />
         <Route path="munki" element={<MunkiPage />} />
         <Route path="munki/manifests" element={<ManifestsPage />} />
+        <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
@@ -29,6 +38,7 @@ export function App() {
 
 function Login({ onDone }: { onDone: () => void }) {
   const [token, setValue] = useState("");
+  const { theme, setTheme } = useTheme();
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (!token.trim()) return;
@@ -36,11 +46,13 @@ function Login({ onDone }: { onDone: () => void }) {
     onDone();
   };
   return (
-    <div className="login">
-      <form className="panel" onSubmit={submit}>
+    <div className="login page">
+      <form className="card login-card" onSubmit={submit}>
+        <span className="mark"><Icon name="orbit" size={15} /></span>
         <h1>Mission Control</h1>
-        <p className="lede">Paste an API token. Configuration stays in Terraform.</p>
+        <p className="sub">Paste an API token. Configuration stays in Terraform.</p>
         <input
+          className="field"
           autoFocus
           type="password"
           placeholder="API token"
@@ -48,7 +60,18 @@ function Login({ onDone }: { onDone: () => void }) {
           onChange={(event) => setValue(event.target.value)}
           aria-label="API token"
         />
-        <button className="btn" type="submit">Continue</button>
+        <button className="capsule primary" type="submit">Continue</button>
+        <div className="choice" style={{ marginTop: 16 }}>
+          <span className="faint">Appearance</span>
+          <button
+            className="capsule"
+            type="button"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            <Icon name={theme === "dark" ? "moon" : "sun"} size={14} />
+            {theme === "dark" ? "Dark" : "Light"}
+          </button>
+        </div>
       </form>
     </div>
   );
