@@ -22,7 +22,10 @@ info:
     credentials are write-only and are never returned. The NVD API key on
     vulnerability settings is write-only and is never returned. An empty key
     on update keeps the stored key. Promotion of a vulnerable package is a
-    pull request against Arequ/terraform-mission-control, not an API call.
+    pull request against the configured GitOps repository
+    (MC_CONFIG_REPO, default Arequ/terraform-mission-control), not an API call.
+    GET /api/v1/meta returns that repository, its default branch, and a deep
+    link for each config kind.
 servers:
   - url: /
 security:
@@ -65,6 +68,21 @@ paths:
       summary: This document
       responses:
         "200": { description: OpenAPI YAML }
+  /api/v1/meta:
+    get:
+      tags: [meta]
+      security: []
+      summary: Public UI settings for the GitOps repository. No credentials.
+      description: |
+        config_repo and config_branch come from MC_CONFIG_REPO and
+        MC_CONFIG_BRANCH. config_links maps each config kind to a GitHub edit
+        URL, or a tree URL when that kind has no single file.
+      responses:
+        "200":
+          description: settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServerMeta" }
   /api/v1/tokens:
     get:
       tags: [meta]
@@ -1163,3 +1181,31 @@ components:
           type: array
           items: { type: string }
         managed_by: { type: string }
+    ServerMeta:
+      type: object
+      required: [config_repo, config_branch, config_links]
+      properties:
+        config_repo: { type: string, example: Arequ/terraform-mission-control }
+        config_branch: { type: string, example: main }
+        config_links:
+          type: object
+          additionalProperties: { type: string, format: uri }
+          description: |
+            GitHub edit URL (`/edit/<branch>/<path>`) or tree URL
+            (`/tree/<branch>/<dir>`) for each config kind.
+          properties:
+            recipe: { type: string }
+            schedule: { type: string }
+            runner_pool: { type: string }
+            munki_catalog: { type: string }
+            munki_manifest: { type: string }
+            munki_promotion: { type: string }
+            os_policy: { type: string }
+            osquery_pack: { type: string }
+            osquery_query: { type: string }
+            osquery_label: { type: string }
+            source_connector: { type: string }
+            log_view: { type: string }
+            vulnerability_settings: { type: string }
+            cpe_override: { type: string }
+            sla: { type: string }

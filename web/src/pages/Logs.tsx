@@ -34,7 +34,7 @@ export function LogsPage() {
         title="Logs"
         badge
         lede="Named views. The lines read the way they do in the file."
-        extra={<ProposeChange />}
+        extra={<ProposeChange kind="log_view" />}
       />
       <div className="content fleet">
         {error ? <p className="note">{error}</p> : null}
@@ -371,7 +371,7 @@ export function LogViewerPage() {
           <>
             <Link className="capsule" to={`/logs${deviceId ? `?device=${encodeURIComponent(deviceId)}` : ""}`}>All views</Link>
             <Managed />
-            <ProposeChange />
+            <ProposeChange kind="log_view" />
           </>
         }
       />

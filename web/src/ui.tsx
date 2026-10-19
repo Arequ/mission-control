@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useState, type C
 import { flushSync } from "react-dom";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api, clearToken } from "./api";
+import { acceptMeta, FALLBACK_META, type ConfigKind, type ServerMeta } from "./configLinks";
 import { Icon, type IconName } from "./icons";
 
 type Theme = "light" | "dark";
@@ -10,6 +11,11 @@ const THEME_KEY = "mc.theme";
 type ThemeCtx = { theme: Theme; setTheme: (next: Theme) => void };
 const ThemeContext = createContext<ThemeCtx>({ theme: "light", setTheme: () => {} });
 const SearchContext = createContext({ q: "", setQ: (_value: string) => { void _value; } });
+const MetaContext = createContext<ServerMeta>(FALLBACK_META);
+
+export function useServerMeta() {
+  return useContext(MetaContext);
+}
 
 export function useTheme() {
   return useContext(ThemeContext);
@@ -25,6 +31,18 @@ function readTheme(): Theme {
 export function Providers({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(readTheme);
   const [q, setQ] = useState("");
+  const [meta, setMeta] = useState<ServerMeta>(FALLBACK_META);
+  useEffect(() => {
+    let stop = false;
+    fetch("/api/v1/meta")
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("meta"))))
+      .then((body: unknown) => {
+        const next = acceptMeta(body);
+        if (!stop && next) setMeta(next);
+      })
+      .catch(() => {});
+    return () => { stop = true; };
+  }, []);
   const setTheme = (next: Theme) => {
     const apply = () => {
       document.documentElement.classList.toggle("dark", next === "dark");
@@ -41,7 +59,9 @@ export function Providers({ children }: { children: ReactNode }) {
   };
   return (
     <ThemeContext.Provider value={{ theme, setTheme }}>
-      <SearchContext.Provider value={{ q, setQ }}>{children}</SearchContext.Provider>
+      <MetaContext.Provider value={meta}>
+        <SearchContext.Provider value={{ q, setQ }}>{children}</SearchContext.Provider>
+      </MetaContext.Provider>
     </ThemeContext.Provider>
   );
 }
@@ -230,11 +250,11 @@ export function Managed({ small }: { small?: boolean }) {
   return <span className={`tf${small ? " sm" : ""}`}><Icon name="lock" size={11} />Managed by Terraform</span>;
 }
 
-export const CONFIG_REPO = "https://github.com/Arequ/terraform-mission-control";
-
-export function ProposeChange() {
+export function ProposeChange({ kind }: { kind: ConfigKind }) {
+  const meta = useServerMeta();
+  const href = meta.config_links[kind] || FALLBACK_META.config_links[kind] || "";
   return (
-    <a className="capsule" href={CONFIG_REPO} target="_blank" rel="noreferrer">
+    <a className="capsule" href={href} target="_blank" rel="noreferrer">
       Propose change
     </a>
   );

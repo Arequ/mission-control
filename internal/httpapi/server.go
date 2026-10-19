@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Arequ/mission-control/internal/configrepo"
 	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/osquery"
 	"github.com/Arequ/mission-control/internal/storage"
@@ -32,6 +33,7 @@ type Server struct {
 	inventory    time.Duration
 	forward      osquery.Forwarder
 	logRetention time.Duration
+	configRepo   configrepo.Repo
 }
 
 // Options configures the server.
@@ -47,6 +49,7 @@ type Options struct {
 	InventoryInterval time.Duration
 	Forwarder         osquery.Forwarder
 	LogRetention      time.Duration
+	ConfigRepo        configrepo.Repo
 }
 
 // New builds a server.
@@ -66,6 +69,9 @@ func New(opts Options) *Server {
 	if opts.Forwarder == nil {
 		opts.Forwarder = osquery.NopForwarder{}
 	}
+	if opts.ConfigRepo.Slug == "" {
+		opts.ConfigRepo = configrepo.Default()
+	}
 	return &Server{
 		store:        opts.Store,
 		blobs:        opts.Blobs,
@@ -78,6 +84,7 @@ func New(opts Options) *Server {
 		inventory:    opts.InventoryInterval,
 		forward:      opts.Forwarder,
 		logRetention: opts.LogRetention,
+		configRepo:   opts.ConfigRepo,
 	}
 }
 
@@ -122,6 +129,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.ready)
 	mux.HandleFunc("GET /api/v1/openapi.yaml", s.openAPI)
 	mux.HandleFunc("GET /openapi.yaml", s.openAPI)
+	mux.HandleFunc("GET /api/v1/meta", s.meta)
 
 	mux.Handle("GET /api/v1/audit", s.withAPI("audit:read", http.HandlerFunc(s.listAudit)))
 	mux.Handle("POST /api/v1/tokens", s.withAPI("admin", http.HandlerFunc(s.createToken)))

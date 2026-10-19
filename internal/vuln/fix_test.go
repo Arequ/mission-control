@@ -1,6 +1,7 @@
 package vuln
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -13,7 +14,7 @@ func TestDecidePromoteRunAndOS(t *testing.T) {
 		Packages: []CatalogPackage{{Name: "Chrome", Version: "131.0.6778.139", Catalog: "testing"}},
 		Recipes:  []RecipeState{{ID: "r1", Name: "Chrome", Enabled: true, Status: "succeeded"}},
 	})
-	if chrome.Action != "promote" || chrome.CatalogVersion != "131.0.6778.139" || !strings.Contains(chrome.PRURL, "https://github.com/"+ConfigRepo+"/compare?") {
+	if chrome.Action != "promote" || chrome.CatalogVersion != "131.0.6778.139" || !strings.Contains(chrome.PRURL, "quick_pull=1") || !strings.Contains(chrome.PRBody, "munki/promotion.tf") {
 		t.Fatalf("%+v", chrome)
 	}
 	zoom := Decide(DecideInput{
@@ -41,16 +42,42 @@ func TestDecidePromoteRunAndOS(t *testing.T) {
 		Installs: []Install{{Version: "130.0.6723.117"}},
 		Packages: []CatalogPackage{{Name: "Chrome", Version: "131.0.6778.139", Catalog: "production"}},
 	})
-	if prod.Action != "require_install" {
-		t.Fatal(prod.Action)
+	if prod.Action != "require_install" || !strings.Contains(prod.PRBody, "munki/manifests.tf") || !strings.Contains(prod.PRURL, "quick_pull=1") {
+		t.Fatal(prod.Action, prod.PRURL)
 	}
 	os := Decide(DecideInput{
 		CVE: "CVE-2024-44308", SoftwareKey: "o:apple:macos", SoftwareName: "macOS", OS: true,
 		Trains:   []Train{{Part: "o", Vendor: "apple", Product: "macos", Major: 15, FixedVersion: "15.1.1", FixedBuild: "24B91", Mode: "independent"}},
 		Installs: []Install{{Version: "15.1", Build: "24B83"}},
 	})
-	if os.Action != "os_update" || os.RequiredOS != "15.1.1 (24B91)" {
+	if os.Action != "os_update" || os.RequiredOS != "15.1.1 (24B91)" || !strings.Contains(os.PRBody, "munki/os_policy.tf") {
 		t.Fatalf("%+v", os)
+	}
+}
+
+func TestDecideEscapesPackageName(t *testing.T) {
+	name := "Chrome & Co\n+100% <script>"
+	got := Decide(DecideInput{
+		CVE: "CVE-2024-11395", SoftwareKey: "a:google:chrome", SoftwareName: name,
+		Ranges:   []ProductBound{{Vendor: "google", Product: "chrome", Bound: Bound{EndExcl: "131.0.6778.85"}}},
+		Installs: []Install{{Version: "131.0.6778.70"}},
+		Packages: []CatalogPackage{{Name: name, Version: "131.0.6778.139", Catalog: "testing"}},
+	})
+	if got.Action != "promote" {
+		t.Fatal(got.Action)
+	}
+	u, err := url.Parse(got.PRURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Host != "github.com" || u.Query().Get("quick_pull") != "1" || u.Query().Get("title") != got.PRTitle || u.Query().Get("body") != got.PRBody {
+		t.Fatalf("%+v", u)
+	}
+	if len(u.Query()) != 3 || !strings.Contains(got.PRTitle, name) || !strings.Contains(got.PRBody, "File: munki/promotion.tf") {
+		t.Fatalf("title %q\nbody %q", got.PRTitle, got.PRBody)
+	}
+	if strings.Contains(u.RawQuery, "&title=hacked") || strings.Contains(got.PRURL, "\n") {
+		t.Fatal(got.PRURL)
 	}
 }
 

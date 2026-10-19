@@ -9,8 +9,9 @@ import {
   type VulnerabilityIssue,
   type VulnerabilitySummary,
 } from "../api";
+import { safeGitHubLink } from "../configLinks";
 import { Icon } from "../icons";
-import { Empty, Page, Toolbar, ago, enterStyle, useSearch } from "../ui";
+import { Empty, Page, Toolbar, ago, enterStyle, useSearch, useServerMeta } from "../ui";
 
 const severities = ["critical", "high", "medium", "low"] as const;
 const statuses = [
@@ -248,6 +249,8 @@ function IssueDetail({ id }: { id: string }) {
 
 function FixCard({ issue, busy, notice, onRun }: { issue: VulnerabilityDetail; busy: boolean; notice: string; onRun: () => void }) {
   const fix = issue.fix;
+  const meta = useServerMeta();
+  const pr = safeGitHubLink(fix.pr_url, ["compare", "edit", "tree"], meta.config_repo);
   return (
     <div className="fix-card">
       <div className="who">
@@ -259,8 +262,8 @@ function FixCard({ issue, busy, notice, onRun }: { issue: VulnerabilityDetail; b
       </div>
       {fix.action === "promote" || fix.action === "require_install" ? <FixSteps action={fix.action} /> : null}
       <div className="fix-actions">
-        {fix.pr_url ? (
-          <a className="capsule primary" href={fix.pr_url} target="_blank" rel="noreferrer">
+        {pr ? (
+          <a className="capsule primary" href={pr} target="_blank" rel="noreferrer">
             <Icon name="pr" size={14} />{prLabel(fix.action)}
           </a>
         ) : null}
@@ -272,7 +275,7 @@ function FixCard({ issue, busy, notice, onRun }: { issue: VulnerabilityDetail; b
         {fix.action === "recipe_pending" ? <span className="pill blue">Recipe queued</span> : null}
         {fix.action === "unmanaged" ? <span className="pill gray">No managed fix</span> : null}
       </div>
-      {fix.pr_url ? <p className="faint fix-note"><Icon name="pr" size={12} /> Opens a pull request on Arequ/terraform-mission-control. This does not change the catalog.</p> : null}
+      {pr ? <p className="faint fix-note"><Icon name="pr" size={12} /> Opens a pull request on {meta.config_repo}. This does not change the catalog.</p> : null}
       {notice ? <p className="sub">{notice}</p> : null}
     </div>
   );

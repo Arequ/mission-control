@@ -107,7 +107,7 @@ func TestVulnerabilityMatchingWorkflow(t *testing.T) {
 		byCVE[issue.CVEID+"|"+issue.SoftwareKey] = issue
 	}
 	chrome := byCVE["CVE-2024-11395|a:google:chrome"]
-	if chrome.ID == "" || chrome.Fix.Action != "promote" || !strings.Contains(chrome.Fix.PRURL, "https://github.com/"+vuln.ConfigRepo+"/compare?") {
+	if chrome.ID == "" || chrome.Fix.Action != "promote" || !strings.Contains(chrome.Fix.PRURL, "quick_pull=1") || !strings.Contains(chrome.Fix.PRBody, "munki/promotion.tf") || !strings.Contains(chrome.Fix.PRURL, "https://github.com/"+vuln.ConfigRepo+"/compare/") {
 		t.Fatalf("chrome promote %+v", chrome.Fix)
 	}
 	if strings.Contains(chrome.Fix.PRURL, "promotePackage") {

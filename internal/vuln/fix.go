@@ -1,13 +1,14 @@
 package vuln
 
 import (
-	"net/url"
 	"strings"
+
+	"github.com/Arequ/mission-control/internal/configrepo"
 )
 
-// ConfigRepo is the GitOps repository. Promotion and install changes are pull
-// requests against it. This process does not write to that repository.
-const ConfigRepo = "Arequ/terraform-mission-control"
+// ConfigRepo is the default GitOps repository. Promotion and install changes
+// are pull requests against it. This process does not write that repository.
+const ConfigRepo = configrepo.DefaultSlug
 
 // CatalogPackage is one Munki item already in a catalog.
 type CatalogPackage struct {
@@ -59,6 +60,7 @@ type DecideInput struct {
 	Installs     []Install
 	Packages     []CatalogPackage
 	Recipes      []RecipeState
+	Repo         configrepo.Repo
 }
 
 // Decide chooses the action for one issue.
@@ -66,6 +68,12 @@ type DecideInput struct {
 // ESR fix does not clear a newer train that is still behind.
 func Decide(in DecideInput) Plan {
 	plan := Plan{FixedVersion: fixedDisplay(in)}
+	repo := in.Repo
+	if repo.Slug == "" {
+		repo = configrepo.Default()
+	} else if repo.Branch == "" {
+		repo.Branch = configrepo.DefaultBranch
+	}
 	if in.OS {
 		plan.Action = "os_update"
 		plan.RequiredOS = plan.FixedVersion
@@ -76,7 +84,7 @@ func Decide(in DecideInput) Plan {
 		title := "Require " + in.SoftwareName + " " + plan.RequiredOS
 		body := "macOS update for " + in.CVE + ".\n\nRequired version: " + plan.RequiredOS +
 			"\n\nMission Control does not change this repository. Put the required version in the OS update policy."
-		plan.PRTitle, plan.PRBody, plan.PRURL = title, body, PullRequestURL(title, body)
+		plan.setPR(repo, configrepo.KindOSPolicy, title, body)
 		return plan
 	}
 	product, _ := productFromKey(in.SoftwareKey)
@@ -109,7 +117,7 @@ func Decide(in DecideInput) Plan {
 		title := "Install " + production.Name + " " + production.Version + " on affected Macs"
 		body := production.Name + " " + production.Version + " is already in the production catalog and clears " + in.CVE +
 			" on " + in.SoftwareName + ".\n\nAdd it to managed_installs for the manifests that still have an affected version.\n\nMission Control does not change this repository."
-		plan.PRTitle, plan.PRBody, plan.PRURL = title, body, PullRequestURL(title, body)
+		plan.setPR(repo, configrepo.KindMunkiManifest, title, body)
 		return plan
 	}
 	if testing != nil {
@@ -119,7 +127,7 @@ func Decide(in DecideInput) Plan {
 		title := "Promote " + testing.Name + " " + testing.Version + " to production"
 		body := testing.Name + " " + testing.Version + " is in the testing catalog and clears " + in.CVE +
 			" on " + in.SoftwareName + ".\n\nPromote it to production. Do not edit the catalog from the Mission Control UI.\n\nMission Control does not change this repository."
-		plan.PRTitle, plan.PRBody, plan.PRURL = title, body, PullRequestURL(title, body)
+		plan.setPR(repo, configrepo.KindMunkiPromotion, title, body)
 		return plan
 	}
 	if rec := matchRecipe(in.Recipes, product, in.SoftwareName); rec != nil {
@@ -138,14 +146,16 @@ func Decide(in DecideInput) Plan {
 	return plan
 }
 
-// PullRequestURL is a GitHub compare link with the change already written.
-// Opening it does not create the pull request and does not change a catalog.
-func PullRequestURL(title, body string) string {
-	v := url.Values{}
-	v.Set("expand", "1")
-	v.Set("title", title)
-	v.Set("body", body)
-	return "https://github.com/" + ConfigRepo + "/compare?" + v.Encode()
+// setPR fills the compare link. A bad repository leaves the link empty so the
+// UI does not open an unscoped URL.
+func (plan *Plan) setPR(repo configrepo.Repo, kind configrepo.Kind, title, body string) {
+	link, usedTitle, usedBody, err := configrepo.PullRequestLink(repo, kind, title, body)
+	if err != nil {
+		return
+	}
+	plan.PRTitle = usedTitle
+	plan.PRBody = usedBody
+	plan.PRURL = link
 }
 
 // Applies reports whether any stored range matches version on a Mac running osVersion.

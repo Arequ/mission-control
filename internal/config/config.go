@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Arequ/mission-control/internal/configrepo"
 )
 
 // Config is the server process configuration.
@@ -37,6 +39,8 @@ type Config struct {
 	ElasticIndex      string
 	ElasticAPIKey     string
 	LogRetention      time.Duration
+	ConfigRepo        string
+	ConfigBranch      string
 }
 
 // Load reads configuration from the environment.
@@ -67,7 +71,15 @@ func Load() (Config, error) {
 		ElasticIndex:      getenv("MC_ELASTIC_INDEX", "osquery-results"),
 		ElasticAPIKey:     os.Getenv("MC_ELASTIC_API_KEY"),
 		LogRetention:      720 * time.Hour,
+		ConfigRepo:        configrepo.DefaultSlug,
+		ConfigBranch:      configrepo.DefaultBranch,
 	}
+	repo, err := configrepo.Parse(getenv("MC_CONFIG_REPO", configrepo.DefaultSlug), getenv("MC_CONFIG_BRANCH", configrepo.DefaultBranch))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.ConfigRepo = repo.Slug
+	cfg.ConfigBranch = repo.Branch
 	if v, ok := os.LookupEnv("MC_OSQUERY_LOG_RETENTION"); ok {
 		if strings.TrimSpace(v) == "" || strings.TrimSpace(v) == "0" {
 			cfg.LogRetention = 0

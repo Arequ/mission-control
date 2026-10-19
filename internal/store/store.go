@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Arequ/mission-control/internal/clock"
+	"github.com/Arequ/mission-control/internal/configrepo"
 	"github.com/Arequ/mission-control/internal/db"
 	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/vuln"
@@ -30,6 +31,7 @@ type Store struct {
 	clk        clock.Clock
 	feeds      vuln.Feeds
 	vulnSyncMu sync.Mutex
+	configRepo configrepo.Repo
 }
 
 // Open connects, pings, and migrates.
@@ -64,6 +66,22 @@ func (s *Store) SetClock(c clock.Clock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clk = c
+}
+
+// SetConfigRepo selects the GitOps repository fix links point at.
+func (s *Store) SetConfigRepo(repo configrepo.Repo) {
+	s.mu.Lock()
+	s.configRepo = repo
+	s.mu.Unlock()
+}
+
+func (s *Store) configRepository() configrepo.Repo {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.configRepo.Slug == "" {
+		return configrepo.Default()
+	}
+	return s.configRepo
 }
 
 // SetVulnerabilityFeeds enables scheduled feed sync. Tests leave it unset so

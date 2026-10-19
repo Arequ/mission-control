@@ -394,6 +394,7 @@ func (s *Store) decorateIssues(ctx context.Context, issues []model.Vulnerability
 		return nil, err
 	}
 	now := s.now()
+	repo := s.configRepository()
 	for i := range issues {
 		issue := &issues[i]
 		vendor, product := splitSoftware(issue.SoftwareKey)
@@ -406,6 +407,7 @@ func (s *Store) decorateIssues(ctx context.Context, issues []model.Vulnerability
 			CVE: issue.CVEID, SoftwareKey: issue.SoftwareKey, SoftwareName: issue.SoftwareName,
 			OS: strings.HasPrefix(issue.SoftwareKey, "o:"), Ranges: rs, Trains: ts,
 			Installs: installs[issue.CVEID+"\x00"+issue.SoftwareKey], Packages: pkgs, Recipes: recipes,
+			Repo: repo,
 		})
 		issue.Fix = model.IssueFix{
 			Action: plan.Action, FixedVersion: plan.FixedVersion, FixedBuild: plan.FixedBuild,
