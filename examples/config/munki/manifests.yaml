@@ -1,0 +1,27 @@
+apiVersion: missioncontrol.io/v1
+kind: MunkiManifest
+metadata:
+  name: site-default
+spec:
+  displayName: Site default
+  description: Every managed Mac includes this manifest.
+  catalog: production
+  managedInstalls:
+    - GoogleChrome
+  optionalInstalls:
+    - Slack
+---
+apiVersion: missioncontrol.io/v1
+kind: MunkiPkgInfo
+metadata:
+  name: google-chrome
+spec:
+  name: GoogleChrome
+  displayName: Google Chrome
+  version: "131.0.6778.86"
+  description: Example pkginfo. The package bytes live in the blob store, not in git.
+  catalogs:
+    - testing
+  installerType: copy_from_dmg
+  unattendedInstall: true
+  packageKey: pkgs/GoogleChrome-131.0.6778.86.dmg

@@ -1,0 +1,30 @@
+# Binaries and local build output
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+
+# Go
+vendor/
+
+# Node
+web/node_modules/
+web/dist/
+web/.vite/
+
+# Editor and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local data
+/data/
+*.log

@@ -1,0 +1,9 @@
+apiVersion: missioncontrol.io/v1
+kind: OsqueryQuery
+metadata:
+  name: listening-ports
+spec:
+  description: IPv4 TCP sockets in LISTEN state, on every platform.
+  query: SELECT pid, port, protocol, address, family FROM listening_ports WHERE family = 2;
+  interval: 3600
+  snapshot: true

@@ -1,0 +1,563 @@
+openapi: 3.0.3
+info:
+  title: Mission Control API
+  version: 0.1.0
+  description: |
+    Versioned HTTP API for Mission Control. The web UI and `mcctl` use these
+    routes. Osquery agents use the unversioned `/osquery/*` TLS endpoints and
+    authenticate with an enroll secret and node key, not a bearer token.
+
+    Config-managed resources are written by `POST /api/v1/config/apply` (or the
+    server's directory sync). The API does not offer a side door that mutates
+    those specs.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: meta
+  - name: fleet
+  - name: config
+  - name: queries
+  - name: munki
+  - name: autopkg
+  - name: osquery
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      security: []
+      summary: Liveness
+      responses:
+        "200":
+          description: Process is up
+  /api/openapi.yaml:
+    get:
+      tags: [meta]
+      security: []
+      summary: This document
+      responses:
+        "200":
+          description: OpenAPI YAML
+  /api/v1/me:
+    get:
+      tags: [meta]
+      summary: Caller identity
+      responses:
+        "200":
+          description: Principal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Principal"
+        "401":
+          $ref: "#/components/responses/Error"
+  /api/v1/tokens:
+    post:
+      tags: [meta]
+      summary: Create an API token
+      description: Admin only. The plaintext token is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, role]
+              properties:
+                name: {type: string}
+                role: {type: string, enum: [admin, operator, viewer]}
+      responses:
+        "201":
+          description: Created
+        "403":
+          $ref: "#/components/responses/Error"
+  /api/v1/fleet/summary:
+    get:
+      tags: [fleet]
+      summary: Fleet aggregates
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FleetSummary"
+  /api/v1/devices:
+    get:
+      tags: [fleet]
+      summary: List devices
+      parameters:
+        - in: query
+          name: q
+          schema: {type: string}
+        - in: query
+          name: limit
+          schema: {type: integer}
+        - in: query
+          name: offset
+          schema: {type: integer}
+      responses:
+        "200":
+          description: Devices
+  /api/v1/devices/{id}:
+    get:
+      tags: [fleet]
+      summary: Device detail, apps, and recent query results
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Detail
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/v1/devices/{id}/apps:
+    get:
+      tags: [fleet]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Apps
+  /api/v1/devices/{id}/results:
+    get:
+      tags: [fleet]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Scheduled query results
+  /api/v1/resources:
+    get:
+      tags: [config]
+      summary: List declarative resources
+      responses:
+        "200":
+          description: Resources, including managed status
+  /api/v1/resources/{kind}:
+    get:
+      tags: [config]
+      parameters:
+        - in: path
+          name: kind
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Resources of one kind
+  /api/v1/resources/{kind}/{name}:
+    get:
+      tags: [config]
+      parameters:
+        - in: path
+          name: kind
+          required: true
+          schema: {type: string}
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Resource in the default namespace
+  /api/v1/config/validate:
+    post:
+      tags: [config]
+      summary: Validate resource documents
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigBody"
+      responses:
+        "200":
+          description: Valid
+        "422":
+          description: Diagnostics
+  /api/v1/config/plan:
+    post:
+      tags: [config]
+      summary: Diff desired resources against stored state
+      description: Requires operator. Does not write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigBody"
+      responses:
+        "200":
+          description: Plan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Plan"
+  /api/v1/config/apply:
+    post:
+      tags: [config]
+      summary: Apply desired resources
+      description: Requires admin. Prune defaults to false. Directory sync prunes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConfigBody"
+      responses:
+        "200":
+          description: Plan that was applied
+  /api/v1/config/sync:
+    post:
+      tags: [config]
+      summary: Reconcile MC_CONFIG_DIR now
+      description: Requires admin. Invalid files are refused and do not prune.
+      responses:
+        "200":
+          description: Sync status
+        "409":
+          description: No directory configured
+  /api/v1/config/status:
+    get:
+      tags: [config]
+      summary: Last directory sync
+      responses:
+        "200":
+          description: Status
+  /api/v1/config/export:
+    get:
+      tags: [config]
+      summary: Export stored resources
+      responses:
+        "200":
+          description: Resources
+  /api/v1/queries/live:
+    get:
+      tags: [queries]
+      summary: List distributed queries
+      responses:
+        "200":
+          description: Queries
+    post:
+      tags: [queries]
+      summary: Run a live query
+      description: Requires operator. Targets every device when deviceIds is empty.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql]
+              properties:
+                sql: {type: string}
+                deviceIds:
+                  type: array
+                  items: {type: string}
+      responses:
+        "201":
+          description: Created
+  /api/v1/queries/live/{id}:
+    get:
+      tags: [queries]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Query and per-device results
+  /api/v1/munki/repo:
+    get:
+      tags: [munki]
+      summary: Declared Munki repositories
+      responses:
+        "200":
+          description: Repos
+  /api/v1/munki/catalogs:
+    get:
+      tags: [munki]
+      responses:
+        "200":
+          description: Catalogs
+  /api/v1/munki/manifests:
+    get:
+      tags: [munki]
+      responses:
+        "200":
+          description: Manifests
+  /api/v1/munki/packages:
+    get:
+      tags: [munki]
+      responses:
+        "200":
+          description: Pkginfo resources
+  /munki/repo/{path}:
+    get:
+      tags: [munki]
+      security: []
+      summary: Client repo placeholder
+      description: Returns 501 until phase 2 serves catalogs and pkgs.
+      parameters:
+        - in: path
+          name: path
+          required: true
+          schema: {type: string}
+      responses:
+        "501":
+          description: Not implemented
+  /api/v1/autopkg/repos:
+    get:
+      tags: [autopkg]
+      responses:
+        "200":
+          description: Recipe repos
+  /api/v1/autopkg/pipelines:
+    get:
+      tags: [autopkg]
+      responses:
+        "200":
+          description: Pipelines
+  /api/v1/autopkg/pipelines/{name}/runs:
+    post:
+      tags: [autopkg]
+      summary: Queue a pipeline run
+      description: Requires operator. A Mac runner claims the job.
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: {type: string}
+      responses:
+        "201":
+          description: Job
+        "404":
+          $ref: "#/components/responses/Error"
+  /api/v1/autopkg/runs:
+    get:
+      tags: [autopkg]
+      responses:
+        "200":
+          description: Runs
+  /api/v1/autopkg/runs/{id}:
+    get:
+      tags: [autopkg]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      responses:
+        "200":
+          description: Run, including logs
+  /api/v1/runners:
+    get:
+      tags: [autopkg]
+      responses:
+        "200":
+          description: Runners, without tokens
+    post:
+      tags: [autopkg]
+      summary: Register a runner
+      description: Admin only. The runner token is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string}
+                labels: {type: object, additionalProperties: {type: string}}
+      responses:
+        "201":
+          description: Runner and token
+  /api/v1/runner/heartbeat:
+    post:
+      tags: [autopkg]
+      summary: Runner heartbeat
+      description: Authenticate with the runner token, not a user token.
+      responses:
+        "200":
+          description: OK
+  /api/v1/runner/jobs/claim:
+    post:
+      tags: [autopkg]
+      summary: Claim the next queued job
+      responses:
+        "200":
+          description: Job or null
+  /api/v1/runner/jobs/{id}/logs:
+    post:
+      tags: [autopkg]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chunk: {type: string}
+      responses:
+        "200":
+          description: Appended
+  /api/v1/runner/jobs/{id}/complete:
+    post:
+      tags: [autopkg]
+      parameters:
+        - $ref: "#/components/parameters/ID"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: {type: string, enum: [succeeded, failed]}
+                logs: {type: string}
+                result: {type: object}
+      responses:
+        "200":
+          description: Finished
+  /osquery/enroll:
+    post:
+      tags: [osquery]
+      security: []
+      summary: Enroll an osquery agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enroll_secret, host_identifier]
+              properties:
+                enroll_secret: {type: string}
+                host_identifier: {type: string}
+                host_details: {type: object}
+      responses:
+        "200":
+          description: Node key
+        "401":
+          description: Bad enroll secret
+  /osquery/config:
+    post:
+      tags: [osquery]
+      security: []
+      summary: Config for an enrolled node
+      responses:
+        "200":
+          description: osquery config, or node_invalid
+  /osquery/log:
+    post:
+      tags: [osquery]
+      security: []
+      summary: Result and status logs
+      responses:
+        "200":
+          description: Accepted, or node_invalid
+  /osquery/distributed/read:
+    post:
+      tags: [osquery]
+      security: []
+      summary: Pending distributed queries
+      responses:
+        "200":
+          description: Query map
+  /osquery/distributed/write:
+    post:
+      tags: [osquery]
+      security: []
+      summary: Distributed query results
+      responses:
+        "200":
+          description: Accepted
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    ID:
+      in: path
+      name: id
+      required: true
+      schema: {type: string}
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: {type: string}
+            message: {type: string}
+    Principal:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        role: {type: string}
+    ConfigBody:
+      type: object
+      required: [resources]
+      properties:
+        resources:
+          type: array
+          items:
+            $ref: "#/components/schemas/Resource"
+        prune: {type: boolean}
+        verbose: {type: boolean}
+    Resource:
+      type: object
+      required: [apiVersion, kind, metadata, spec]
+      properties:
+        apiVersion: {type: string, example: missioncontrol.io/v1}
+        kind: {type: string}
+        metadata:
+          type: object
+          required: [name]
+          properties:
+            name: {type: string}
+            namespace: {type: string}
+            labels: {type: object, additionalProperties: {type: string}}
+            annotations: {type: object, additionalProperties: {type: string}}
+        spec: {type: object}
+        status: {type: object}
+        sourcePath: {type: string}
+    Plan:
+      type: object
+      properties:
+        summary:
+          type: object
+          properties:
+            create: {type: integer}
+            update: {type: integer}
+            delete: {type: integer}
+            unchanged: {type: integer}
+        changes:
+          type: array
+          items: {type: object}
+    FleetSummary:
+      type: object
+      properties:
+        devices: {type: integer}
+        online: {type: integer}
+        offline: {type: integer}
+        configDrift: {type: integer}
+        platforms:
+          type: array
+          items: {type: object}
+        osVersions:
+          type: array
+          items: {type: object}
+        topApps:
+          type: array
+          items: {type: object}
+        recent:
+          type: array
+          items: {type: object}

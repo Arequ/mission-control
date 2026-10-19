@@ -1,0 +1,13 @@
+apiVersion: missioncontrol.io/v1
+kind: Role
+metadata:
+  name: operator
+spec:
+  description: >
+    Day-to-day fleet work. Token roles are what the API enforces today;
+    Role resources are stored so a later phase can bind them to people and OIDC groups.
+  rules:
+    - verbs: ["get", "list"]
+      resources: ["devices", "resources", "munki", "autopkg"]
+    - verbs: ["create"]
+      resources: ["livequeries", "autopkgruns"]

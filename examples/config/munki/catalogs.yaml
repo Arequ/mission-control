@@ -1,0 +1,24 @@
+apiVersion: missioncontrol.io/v1
+kind: MunkiRepo
+metadata:
+  name: primary
+spec:
+  description: The repository Mission Control will serve to Munki clients.
+  publicBaseURL: https://munki.example.com/repo
+---
+apiVersion: missioncontrol.io/v1
+kind: MunkiCatalog
+metadata:
+  name: testing
+spec:
+  displayName: Testing
+  description: Where AutoPkg promotions land first.
+  soakHours: 72
+---
+apiVersion: missioncontrol.io/v1
+kind: MunkiCatalog
+metadata:
+  name: production
+spec:
+  displayName: Production
+  description: Catalog installed by the default manifest.

@@ -1,0 +1,30 @@
+apiVersion: missioncontrol.io/v1
+kind: OsqueryPack
+metadata:
+  name: macos-security
+  labels:
+    owner: security
+spec:
+  description: Baseline macOS security signals.
+  platform: darwin
+  queries:
+    - name: sip
+      description: System Integrity Protection
+      query: SELECT * FROM sip_config;
+      interval: 3600
+      snapshot: true
+    - name: filevault
+      description: Disk encryption
+      query: SELECT * FROM disk_encryption;
+      interval: 3600
+      snapshot: true
+    - name: firewall
+      description: Application firewall
+      query: SELECT global_state, stealth_enabled, logging_enabled FROM alf;
+      interval: 3600
+      snapshot: true
+    - name: sharing
+      description: Remote login and sharing
+      query: SELECT * FROM sharing_preferences;
+      interval: 3600
+      snapshot: true
