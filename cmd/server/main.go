@@ -94,6 +94,7 @@ func main() {
 		MaxUpload:         cfg.MaxUploadBytes,
 		InventoryInterval: cfg.InventoryInterval,
 		Forwarder:         sink,
+		LogRetention:      cfg.LogRetention,
 	})
 	if err := srv.Tick(ctx); err != nil {
 		log.Error("initial scheduler tick", "err", err)

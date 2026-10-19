@@ -31,6 +31,7 @@ type Server struct {
 	maxUpload    int64
 	inventory    time.Duration
 	forward      osquery.Forwarder
+	logRetention time.Duration
 }
 
 // Options configures the server.
@@ -45,6 +46,7 @@ type Options struct {
 	MaxUpload         int64
 	InventoryInterval time.Duration
 	Forwarder         osquery.Forwarder
+	LogRetention      time.Duration
 }
 
 // New builds a server.
@@ -75,6 +77,7 @@ func New(opts Options) *Server {
 		maxUpload:    opts.MaxUpload,
 		inventory:    opts.InventoryInterval,
 		forward:      opts.Forwarder,
+		logRetention: opts.LogRetention,
 	}
 }
 
@@ -89,7 +92,15 @@ func (s *Server) Tick(ctx context.Context) error {
 	if _, err := s.store.PromoteDue(ctx); err != nil {
 		return err
 	}
-	return s.store.ExpireLiveQueries(ctx)
+	if err := s.store.ExpireLiveQueries(ctx); err != nil {
+		return err
+	}
+	if s.logRetention > 0 {
+		if _, err := s.store.PurgeOsqueryLogs(ctx, s.logRetention); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Handler is the root HTTP handler.

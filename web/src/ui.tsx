@@ -238,6 +238,10 @@ const tone: Record<string, { kind: string; icon?: IconName; live?: boolean }> = 
   succeeded: { kind: "green", icon: "check" },
   online: { kind: "green", live: true },
   offline: { kind: "red" },
+  timeout: { kind: "orange", icon: "alert" },
+  pending: { kind: "gray" },
+  sent: { kind: "teal", live: true },
+  complete: { kind: "green", icon: "check" },
 };
 
 export function StatusPill({ status, result }: { status?: string; result?: string }) {

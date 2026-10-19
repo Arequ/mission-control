@@ -257,12 +257,13 @@ export const api = {
   manifests: () => request<{ manifests: Manifest[] }>("/api/v1/manifests"),
   rules: () => request<{ promotion_rules: PromotionRule[] }>("/api/v1/promotion-rules"),
   summary: () => request<FleetSummary>("/api/v1/fleet/summary"),
-  devices: (params: { q?: string; status?: string; label?: string; limit?: number }) => {
+  devices: (params: { q?: string; status?: string; label?: string; limit?: number; offset?: number }) => {
     const q = new URLSearchParams();
     if (params.q) q.set("q", params.q);
     if (params.status) q.set("status", params.status);
     if (params.label) q.set("label", params.label);
     q.set("limit", String(params.limit ?? 100));
+    if (params.offset) q.set("offset", String(params.offset));
     return request<{ devices: Device[]; total: number }>(`/api/v1/devices?${q}`);
   },
   device: (id: string) => request<Device>(`/api/v1/devices/${id}`),

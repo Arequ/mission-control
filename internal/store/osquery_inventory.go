@@ -93,29 +93,200 @@ func insertStatusLogs(ctx context.Context, tx pgx.Tx, deviceID string, rows []pa
 	return nil
 }
 
-func loadQueryRows(ctx context.Context, tx pgx.Tx, deviceID, name string) ([]map[string]string, error) {
-	var raw []byte
-	err := tx.QueryRow(ctx, `SELECT result_rows FROM device_query_results WHERE device_id=$1 AND query_name=$2`, deviceID, name).Scan(&raw)
-	if isNoRows(err) {
-		return []map[string]string{}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return rowsFromJSON(raw)
+type queryState struct {
+	Rows    []map[string]string
+	Counter int64
+	Open    bool
 }
 
-func saveQueryRows(ctx context.Context, tx pgx.Tx, deviceID, name string, rows []map[string]string, now time.Time) error {
-	b, err := json.Marshal(rows)
+// snapshotBatchLimit is the osquery logger_tls_max_lines default. A batch that
+// fills it may be a partial event-mode snapshot continued in the next POST.
+var snapshotBatchLimit = 1024
+
+type interpretStep struct {
+	rows      []map[string]string
+	widenApps bool
+}
+
+func loadQueryState(ctx context.Context, tx pgx.Tx, deviceID, name string) (queryState, error) {
+	var raw []byte
+	var counter int64
+	var open bool
+	err := tx.QueryRow(ctx, `SELECT result_rows, snapshot_counter, snapshot_open FROM device_query_results WHERE device_id=$1 AND query_name=$2`, deviceID, name).Scan(&raw, &counter, &open)
+	if isNoRows(err) {
+		return queryState{Rows: []map[string]string{}}, nil
+	}
+	if err != nil {
+		return queryState{}, err
+	}
+	rows, err := rowsFromJSON(raw)
+	if err != nil {
+		return queryState{}, err
+	}
+	return queryState{Rows: rows, Counter: counter, Open: open}, nil
+}
+
+func saveQueryState(ctx context.Context, tx pgx.Tx, deviceID, name string, state queryState, now time.Time) error {
+	if state.Rows == nil {
+		state.Rows = []map[string]string{}
+	}
+	b, err := json.Marshal(state.Rows)
 	if err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO device_query_results (device_id, query_name, result_rows, updated_at)
-		VALUES ($1,$2,$3::jsonb,$4)
-		ON CONFLICT (device_id, query_name) DO UPDATE SET result_rows=EXCLUDED.result_rows, updated_at=EXCLUDED.updated_at`,
-		deviceID, name, string(b), now)
+		INSERT INTO device_query_results (device_id, query_name, result_rows, snapshot_counter, snapshot_open, updated_at)
+		VALUES ($1,$2,$3::jsonb,$4,$5,$6)
+		ON CONFLICT (device_id, query_name) DO UPDATE SET
+			result_rows=EXCLUDED.result_rows,
+			snapshot_counter=EXCLUDED.snapshot_counter,
+			snapshot_open=EXCLUDED.snapshot_open,
+			updated_at=EXCLUDED.updated_at`,
+		deviceID, name, string(b), state.Counter, state.Open, now)
 	return err
+}
+
+// reduceQueryResults folds one query's logs into the stored generation.
+// A single snapshot object replaces the previous rows. Several snapshot
+// objects that share a counter are one event-mode generation: under the line
+// limit they are complete, and at the limit they stay open so a later POST
+// can finish the set. An empty mc_apps snapshot is ignored so a failed or
+// partial inventory does not emit app_removed.
+func reduceQueryResults(name string, prev queryState, items []parsedResult) (queryState, []interpretStep) {
+	state := prev
+	if state.Rows == nil {
+		state.Rows = []map[string]string{}
+	}
+	var steps []interpretStep
+	changed := false
+	for i := 0; i < len(items); {
+		if !items[i].Snapshot {
+			if items[i].Action == "removed" {
+				state.Rows = removeColumnRow(state.Rows, items[i].Columns)
+			} else {
+				state.Rows = append(state.Rows, items[i].Columns)
+			}
+			state.Open = false
+			changed = true
+			i++
+			continue
+		}
+		if changed {
+			steps = append(steps, interpretStep{rows: cloneRows(state.Rows)})
+			changed = false
+		}
+		j := i + 1
+		for j < len(items) && items[j].Snapshot {
+			j++
+		}
+		var more []interpretStep
+		state, more = applySnapshotGroup(name, state, items[i:j])
+		steps = append(steps, more...)
+		i = j
+	}
+	if changed {
+		steps = append(steps, interpretStep{rows: cloneRows(state.Rows)})
+	}
+	if state.Rows == nil {
+		state.Rows = []map[string]string{}
+	}
+	return state, steps
+}
+
+func applySnapshotGroup(name string, state queryState, snaps []parsedResult) (queryState, []interpretStep) {
+	var steps []interpretStep
+	for _, group := range groupSnapsByCounter(snaps) {
+		var more []interpretStep
+		state, more = applyOneCounter(name, state, group)
+		steps = append(steps, more...)
+	}
+	return state, steps
+}
+
+func groupSnapsByCounter(snaps []parsedResult) [][]parsedResult {
+	var out [][]parsedResult
+	for _, snap := range snaps {
+		if len(out) == 0 || out[len(out)-1][0].Counter != snap.Counter {
+			out = append(out, []parsedResult{snap})
+			continue
+		}
+		out[len(out)-1] = append(out[len(out)-1], snap)
+	}
+	return out
+}
+
+func applyOneCounter(name string, state queryState, snaps []parsedResult) (queryState, []interpretStep) {
+	batch := concatSnapRows(snaps)
+	if name == osquery.QApps && snapRowsEmpty(snaps) {
+		return state, nil
+	}
+	counter := snaps[0].Counter
+	continuation := state.Open && state.Counter == counter
+	if continuation {
+		acc := joinRows(state.Rows, batch)
+		if len(snaps) >= snapshotBatchLimit {
+			return queryState{Rows: acc, Counter: counter, Open: true}, []interpretStep{{rows: cloneRows(acc), widenApps: true}}
+		}
+		return queryState{Rows: acc, Counter: counter, Open: false}, []interpretStep{{rows: cloneRows(acc)}}
+	}
+	var steps []interpretStep
+	if state.Open {
+		steps = append(steps, interpretStep{rows: cloneRows(state.Rows)})
+	}
+	if len(snaps) >= snapshotBatchLimit {
+		steps = append(steps, interpretStep{rows: cloneRows(batch), widenApps: true})
+		return queryState{Rows: cloneRows(batch), Counter: counter, Open: true}, steps
+	}
+	steps = append(steps, interpretStep{rows: cloneRows(batch)})
+	return queryState{Rows: cloneRows(batch), Counter: counter, Open: false}, steps
+}
+
+func snapRowsEmpty(snaps []parsedResult) bool {
+	for _, snap := range snaps {
+		if len(snap.Rows) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func concatSnapRows(snaps []parsedResult) []map[string]string {
+	rows := []map[string]string{}
+	for _, snap := range snaps {
+		rows = append(rows, snap.Rows...)
+	}
+	return rows
+}
+
+func joinRows(a, b []map[string]string) []map[string]string {
+	out := make([]map[string]string, 0, len(a)+len(b))
+	out = append(out, a...)
+	out = append(out, b...)
+	return out
+}
+
+func cloneRows(rows []map[string]string) []map[string]string {
+	if len(rows) == 0 {
+		return []map[string]string{}
+	}
+	out := make([]map[string]string, len(rows))
+	copy(out, rows)
+	return out
+}
+
+func appsToRows(apps []model.DeviceApp) []map[string]string {
+	rows := make([]map[string]string, len(apps))
+	for i, app := range apps {
+		rows[i] = map[string]string{
+			"name": app.Name, "path": app.Path,
+			"bundle_identifier": app.BundleID, "bundle_short_version": app.Version,
+		}
+	}
+	return rows
+}
+
+func unionAppRows(base, extra []map[string]string) []map[string]string {
+	return joinRows(base, extra)
 }
 
 func removeColumnRow(rows []map[string]string, target map[string]string) []map[string]string {
@@ -184,10 +355,10 @@ func (s *Store) applyInventory(ctx context.Context, tx pgx.Tx, dev *storedDevice
 			dev.PhysicalMemory = n
 		}
 		if dev.HardwareUUID == "" {
-			setStr(&dev.HardwareUUID, firstStr(row["uuid"]))
+			setStr(&dev.HardwareUUID, usableHardwareID(firstStr(row["uuid"])))
 		}
 		if dev.Serial == "" {
-			setStr(&dev.Serial, firstStr(row["hardware_serial"]))
+			setStr(&dev.Serial, usableHardwareID(firstStr(row["hardware_serial"])))
 		}
 	case osquery.QOSVersion:
 		if len(rows) == 0 {
@@ -255,6 +426,7 @@ func (s *Store) applyInventory(ctx context.Context, tx pgx.Tx, dev *storedDevice
 			if err != nil {
 				return err
 			}
+			next = retainVersions(prev, next)
 			changes = append(changes, diffApps(prev, next)...)
 			if err := saveApps(ctx, tx, dev.ID, next); err != nil {
 				return err
@@ -384,6 +556,12 @@ func normalizeApps(rows []map[string]string) []model.DeviceApp {
 			app.Name = app.Path
 		}
 		if i, ok := seen[app.Path]; ok {
+			if app.Version == "" {
+				app.Version = out[i].Version
+			}
+			if app.Name == "" {
+				app.Name = out[i].Name
+			}
 			out[i] = app
 			continue
 		}
@@ -404,7 +582,7 @@ func diffApps(prev, next []model.DeviceApp) []map[string]any {
 		newSet[a.Path] = a
 		if was, ok := old[a.Path]; !ok {
 			changes = append(changes, map[string]any{"action": "app_installed", "name": a.Name, "path": a.Path, "version": a.Version, "bundle_id": a.BundleID})
-		} else if was.Version != a.Version {
+		} else if a.Version != "" && was.Version != a.Version {
 			changes = append(changes, map[string]any{"action": "app_updated", "name": a.Name, "path": a.Path, "from": was.Version, "to": a.Version, "bundle_id": a.BundleID})
 		}
 	}
@@ -414,6 +592,22 @@ func diffApps(prev, next []model.DeviceApp) []map[string]any {
 		}
 	}
 	return changes
+}
+
+func retainVersions(prev, next []model.DeviceApp) []model.DeviceApp {
+	old := map[string]model.DeviceApp{}
+	for _, app := range prev {
+		old[app.Path] = app
+	}
+	for i, app := range next {
+		if app.Version != "" {
+			continue
+		}
+		if was, ok := old[app.Path]; ok && was.Version != "" {
+			next[i].Version = was.Version
+		}
+	}
+	return next
 }
 
 func loadApps(ctx context.Context, tx pgx.Tx, deviceID string) ([]model.DeviceApp, error) {
@@ -476,4 +670,22 @@ func (s *Store) saveDeviceInventory(ctx context.Context, tx pgx.Tx, dev *storedD
 		dev.PhysicalMemory, dev.PrimaryIP, dev.PrimaryMAC, dev.Username, dev.DiskEncrypted, dev.UptimeSeconds,
 		dev.OsqueryVersion, dev.appsInitialized, dev.HardwareUUID, dev.Serial, s.now())
 	return mapWriteErr(err)
+}
+
+// PurgeOsqueryLogs deletes result and status rows older than keep, measured
+// from the server clock. keep <= 0 leaves the tables alone.
+func (s *Store) PurgeOsqueryLogs(ctx context.Context, keep time.Duration) (int64, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
+	cutoff := s.now().Add(-keep)
+	tag, err := s.pool.Exec(ctx, `DELETE FROM osquery_result_logs WHERE received_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	tag2, err := s.pool.Exec(ctx, `DELETE FROM osquery_status_logs WHERE received_at < $1`, cutoff)
+	if err != nil {
+		return tag.RowsAffected(), err
+	}
+	return tag.RowsAffected() + tag2.RowsAffected(), nil
 }

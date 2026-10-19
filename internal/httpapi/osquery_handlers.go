@@ -2,12 +2,14 @@ package httpapi
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Arequ/mission-control/internal/model"
@@ -15,10 +17,68 @@ import (
 	"github.com/Arequ/mission-control/internal/store"
 )
 
+const osqueryMaxBody = 32 << 20
+
+var errOsqueryTooLarge = errors.New("osquery payload too large")
+
 func decodeOsquery(r *http.Request, dst any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, 32<<20))
+	body, err := readOsqueryBody(r)
+	if err != nil {
+		return err
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
-	return dec.Decode(dst)
+	if err := dec.Decode(dst); err != nil {
+		return err
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return errors.New("trailing json")
+		}
+		return err
+	}
+	return nil
+}
+
+func readOsqueryBody(r *http.Request) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(r.Body, osqueryMaxBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > osqueryMaxBody {
+		return nil, errOsqueryTooLarge
+	}
+	enc := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
+	gzipped := enc == "gzip" || (len(raw) >= 2 && raw[0] == 0x1f && raw[1] == 0x8b)
+	if !gzipped {
+		return raw, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	defer zr.Close()
+	out, err := io.ReadAll(io.LimitReader(zr, osqueryMaxBody+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(out) > osqueryMaxBody {
+		return nil, errOsqueryTooLarge
+	}
+	return out, nil
+}
+
+func rejectOsqueryDecode(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errOsqueryTooLarge) {
+		writeJSON(w, http.StatusRequestEntityTooLarge, errBody{"payload too large"})
+		return true
+	}
+	badJSON(w, err)
+	return true
 }
 
 func writeNodeInvalid(w http.ResponseWriter) {
@@ -44,8 +104,7 @@ type enrollBody struct {
 
 func (s *Server) osqueryEnroll(w http.ResponseWriter, r *http.Request) {
 	var body enrollBody
-	if err := decodeOsquery(r, &body); err != nil {
-		badJSON(w, err)
+	if err := decodeOsquery(r, &body); rejectOsqueryDecode(w, err) {
 		return
 	}
 	id, key, err := s.store.EnrollHost(r.Context(), body.EnrollSecret, body.HostIdentifier, body.HostDetails)
@@ -67,8 +126,7 @@ type nodeBody struct {
 
 func (s *Server) osqueryConfig(w http.ResponseWriter, r *http.Request) {
 	var body nodeBody
-	if err := decodeOsquery(r, &body); err != nil {
-		badJSON(w, err)
+	if err := decodeOsquery(r, &body); rejectOsqueryDecode(w, err) {
 		return
 	}
 	cfg, invalid, err := s.store.OsqueryConfig(r.Context(), body.NodeKey, s.inventory)
@@ -91,8 +149,7 @@ type loggerBody struct {
 
 func (s *Server) osqueryLogger(w http.ResponseWriter, r *http.Request) {
 	var body loggerBody
-	if err := decodeOsquery(r, &body); err != nil {
-		badJSON(w, err)
+	if err := decodeOsquery(r, &body); rejectOsqueryDecode(w, err) {
 		return
 	}
 	events, invalid, err := s.store.IngestLogs(r.Context(), body.NodeKey, body.LogType, body.Data)
@@ -110,8 +167,7 @@ func (s *Server) osqueryLogger(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) osqueryDistributedRead(w http.ResponseWriter, r *http.Request) {
 	var body nodeBody
-	if err := decodeOsquery(r, &body); err != nil {
-		badJSON(w, err)
+	if err := decodeOsquery(r, &body); rejectOsqueryDecode(w, err) {
 		return
 	}
 	queries, invalid, err := s.store.DistributedRead(r.Context(), body.NodeKey)
@@ -138,8 +194,7 @@ type distWriteBody struct {
 
 func (s *Server) osqueryDistributedWrite(w http.ResponseWriter, r *http.Request) {
 	var body distWriteBody
-	if err := decodeOsquery(r, &body); err != nil {
-		badJSON(w, err)
+	if err := decodeOsquery(r, &body); rejectOsqueryDecode(w, err) {
 		return
 	}
 	results := map[string][]map[string]string{}

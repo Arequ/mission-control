@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -80,12 +81,32 @@ func (e ElasticForwarder) Forward(ctx context.Context, events []ResultEvent) err
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return err
+		return fmt.Errorf("elastic bulk: %s", e.redact(err.Error()))
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
 	if res.StatusCode >= 300 {
-		return fmt.Errorf("elastic bulk %d: %s", res.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("elastic bulk %d: %s", res.StatusCode, e.redact(strings.TrimSpace(string(body))))
 	}
 	return nil
+}
+
+func (e ElasticForwarder) redact(msg string) string {
+	if key := strings.TrimSpace(e.APIKey); key != "" {
+		msg = strings.ReplaceAll(msg, key, "[redacted]")
+		bare := strings.TrimPrefix(strings.TrimPrefix(key, "ApiKey "), "apikey ")
+		if bare != "" && bare != key {
+			msg = strings.ReplaceAll(msg, bare, "[redacted]")
+		}
+	}
+	raw := strings.TrimSpace(e.URL)
+	if u, err := url.Parse(raw); err == nil && u.User != nil {
+		if name := u.User.Username(); name != "" {
+			msg = strings.ReplaceAll(msg, name, "[redacted]")
+		}
+		if pw, ok := u.User.Password(); ok && pw != "" {
+			msg = strings.ReplaceAll(msg, pw, "[redacted]")
+		}
+	}
+	return msg
 }

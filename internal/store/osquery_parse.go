@@ -95,6 +95,7 @@ type parsedResult struct {
 	Rows     []map[string]string
 	Snapshot bool
 	Unix     int64
+	Counter  int64
 }
 
 func parseResultLogs(raw json.RawMessage) ([]parsedResult, error) {
@@ -116,9 +117,10 @@ func parseResultLogs(raw json.RawMessage) ([]parsedResult, error) {
 			continue
 		}
 		pr := parsedResult{
-			Name:   firstStr(obj["name"]),
-			Action: firstStr(obj["action"]),
-			Unix:   atoi64(firstStr(obj["unixTime"], obj["unix_time"])),
+			Name:    firstStr(obj["name"]),
+			Action:  firstStr(obj["action"]),
+			Unix:    atoi64(firstStr(obj["unixTime"], obj["unix_time"])),
+			Counter: atoi64(firstStr(obj["counter"])),
 		}
 		if pr.Action == "" {
 			pr.Action = "added"

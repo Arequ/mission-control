@@ -41,3 +41,17 @@ func TestElasticForwarderBulk(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestElasticForwarderRedactsSecrets(t *testing.T) {
+	err := (ElasticForwarder{
+		URL:    "http://elastic:super-secret-key@127.0.0.1:1",
+		APIKey: "super-secret-key",
+		HTTP:   &http.Client{Timeout: time.Second},
+	}).Forward(context.Background(), []ResultEvent{{DeviceID: "d", QueryName: "q", Action: "added"}})
+	if err == nil {
+		t.Fatal("expected dial error")
+	}
+	if strings.Contains(err.Error(), "super-secret-key") || strings.Contains(err.Error(), "elastic:") {
+		t.Fatalf("secret leaked: %s", err.Error())
+	}
+}

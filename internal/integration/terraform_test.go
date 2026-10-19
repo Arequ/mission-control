@@ -214,6 +214,124 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("imported query drifted: %v\n%s", err, out)
 	}
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
+
+	var listedPacks struct {
+		Packs []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"packs"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/osquery/packs")), &listedPacks); err != nil {
+		t.Fatal(err)
+	}
+	var packID string
+	for _, pack := range listedPacks.Packs {
+		if pack.Name == "endpoint" {
+			packID = pack.ID
+		}
+	}
+	if packID == "" {
+		t.Fatal("endpoint pack missing")
+	}
+	var listedLabels struct {
+		Labels []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/osquery/labels")), &listedLabels); err != nil {
+		t.Fatal(err)
+	}
+	var labelID string
+	for _, label := range listedLabels.Labels {
+		if label.Name == "apple-silicon" {
+			labelID = label.ID
+		}
+	}
+	if labelID == "" {
+		t.Fatal("apple-silicon label missing")
+	}
+	var listedSecrets struct {
+		Secrets []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"enroll_secrets"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/osquery/enroll-secrets")), &listedSecrets); err != nil {
+		t.Fatal(err)
+	}
+	var secretID string
+	for _, secret := range listedSecrets.Secrets {
+		if secret.Name == "fleet" {
+			secretID = secret.ID
+		}
+	}
+	if secretID == "" {
+		t.Fatal("fleet enroll secret missing")
+	}
+	run("state", "rm", "missioncontrol_osquery_pack.endpoint")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_pack.endpoint", packID)
+	run("state", "rm", "missioncontrol_osquery_label.apple_silicon")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_label.apple_silicon", labelID)
+	rotated := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"-var", "enroll_secret=rotated-enroll-secret-value")
+	rotOut, rotErr := rotated.CombinedOutput()
+	if strings.Contains(string(rotOut), "example-enroll-secret") || strings.Contains(string(rotOut), "rotated-enroll-secret-value") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", rotOut)
+	}
+	if !errors.As(rotErr, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("enroll secret rotation should plan with exit 2, err=%v\n%s", rotErr, rotOut)
+	}
+	importedPackLabel := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = importedPackLabel.CombinedOutput()
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
+	if err != nil {
+		t.Fatalf("imported pack or label drifted: %v\n%s", err, out)
+	}
+	run("state", "rm", "missioncontrol_osquery_enroll_secret.fleet")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_enroll_secret.fleet", secretID)
+	importedRest := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = importedRest.CombinedOutput()
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "(sensitive value)") {
+		t.Fatalf("imported enroll secret should plan a redacted update, err=%v\n%s", err, out)
+	}
+
+	if _, err := st.Pool().Exec(ctx, `UPDATE osquery_queries SET sql='SELECT 1' WHERE name='launch_daemons'`); err != nil {
+		t.Fatal(err)
+	}
+	driftedQuery := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	driftOut, driftErr = driftedQuery.CombinedOutput()
+	if !errors.As(driftErr, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("query drift should plan with exit 2, err=%v\n%s", driftErr, driftOut)
+	}
+	if strings.Contains(string(driftOut), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", driftOut)
+	}
 
 	run("destroy", "-auto-approve", "-input=false",
 		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",

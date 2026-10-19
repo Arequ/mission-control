@@ -474,7 +474,7 @@ func (r *enrollSecretResource) Schema(_ context.Context, _ resource.SchemaReques
 		Attributes: map[string]schema.Attribute{
 			"id":         schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":       schema.StringAttribute{Required: true},
-			"secret":     schema.StringAttribute{Required: true, Sensitive: true, Description: "Write-only. The API never returns it. Changing it rotates the hash."},
+			"secret":     schema.StringAttribute{Required: true, Sensitive: true, Description: "Sensitive. The API never returns it. Plans show (sensitive value), never the raw secret. Changing it rotates the hash."},
 			"enabled":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
 			"managed_by": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
 		},

@@ -67,7 +67,9 @@ export function LiveQueryPanel({
       .finally(() => setBusy(false));
   };
 
-  const waiting = query && query.status !== "complete" && (query.rows ?? []).length === 0;
+  const rows = query?.rows ?? [];
+  const waiting = query && query.status !== "complete" && rows.length === 0;
+  const timedOut = (query?.targets ?? []).some((target) => target.status === "timeout");
 
   return (
     <div className="stack">
@@ -123,7 +125,8 @@ export function LiveQueryPanel({
             ))}
           </div>
           {waiting ? <Empty>Waiting for the agent…</Empty> : null}
-          {!waiting && (query.rows ?? []).length === 0 ? <Empty>The query finished with no rows.</Empty> : null}
+          {!waiting && rows.length === 0 && timedOut ? <Empty>Timed out waiting for the agent.</Empty> : null}
+          {!waiting && rows.length === 0 && !timedOut ? <Empty>The query finished with no rows.</Empty> : null}
           {(query.rows ?? []).length > 0 ? (
             <div className="table-wrap">
               <table className="result">

@@ -804,7 +804,23 @@ func (s *Store) enrollSecretOK(ctx context.Context, secret string) (bool, error)
 	if strings.TrimSpace(secret) == "" {
 		return false, nil
 	}
-	var n int
-	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM osquery_enroll_secrets WHERE secret_hash=$1 AND enabled`, auth.Hash(secret)).Scan(&n)
-	return n > 0, err
+	// Compare every enabled hash. An index lookup on the digest returns as soon as
+	// Postgres finds a miss, which leaks how the secret relates to stored rows.
+	rows, err := s.pool.Query(ctx, `SELECT secret_hash FROM osquery_enroll_secrets WHERE enabled`)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	got := auth.Hash(secret)
+	ok := false
+	for rows.Next() {
+		var hash string
+		if err := rows.Scan(&hash); err != nil {
+			return false, err
+		}
+		if auth.EqualHash(got, hash) {
+			ok = true
+		}
+	}
+	return ok, rows.Err()
 }

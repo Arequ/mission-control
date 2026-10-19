@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { api, type Device, type OsqueryLabel } from "../api";
 import { Empty, Mark, Page, StatusPill, Toolbar, ago, enterStyle, useSearch } from "../ui";
 
+const pageSize = 25;
+
 export function DevicesPage() {
   const { q } = useSearch();
   const [status, setStatus] = useState("");
@@ -10,7 +12,14 @@ export function DevicesPage() {
   const [labels, setLabels] = useState<OsqueryLabel[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
   const [error, setError] = useState("");
+  const filters = `${q}\0${status}\0${label}`;
+  const [filterSnap, setFilterSnap] = useState(filters);
+  if (filterSnap !== filters) {
+    setFilterSnap(filters);
+    if (offset !== 0) setOffset(0);
+  }
 
   useEffect(() => {
     api.labels().then((res) => setLabels(res.labels)).catch(() => {});
@@ -19,7 +28,7 @@ export function DevicesPage() {
   useEffect(() => {
     let stop = false;
     const load = () => {
-      api.devices({ q, status, label, limit: 100 })
+      api.devices({ q, status, label, limit: pageSize, offset })
         .then((res) => {
           if (stop) return;
           setDevices(res.devices);
@@ -31,7 +40,7 @@ export function DevicesPage() {
     load();
     const t = setInterval(load, 8000);
     return () => { stop = true; clearInterval(t); };
-  }, [q, status, label]);
+  }, [q, status, label, offset]);
 
   return (
     <Page>
@@ -83,6 +92,12 @@ export function DevicesPage() {
                   <div className="end"><StatusPill status={device.status} /></div>
                 </Link>
               ))}
+              <div className="pager">
+                <span className="faint">{total === 0 ? "Showing 0" : `Showing ${offset + 1}–${offset + devices.length} of ${total}`}</span>
+                <span className="grow" />
+                <button className="capsule" type="button" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - pageSize))}>Previous</button>
+                <button className="capsule" type="button" disabled={offset + pageSize >= total} onClick={() => setOffset(offset + pageSize)}>Next</button>
+              </div>
             </>
           )}
         </section>

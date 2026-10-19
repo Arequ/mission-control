@@ -83,7 +83,7 @@ func TestOsquerydLive(t *testing.T) {
 		"--config_plugin=tls",
 		"--logger_plugin=tls",
 		"--distributed_plugin=tls",
-		"--disable_distributed=false",
+		"--logger_tls_compress=true",
 		"--extensions_socket="+filepath.Join(dir, "osquery.em"),
 		"--logger_tls_period=5",
 		"--distributed_interval=5",
@@ -130,7 +130,8 @@ func TestOsquerydLive(t *testing.T) {
 		}
 		device, _ := list[0].(map[string]any)
 		deviceID, _ = device["id"].(string)
-		if deviceID != "" {
+		host, _ := device["hostname"].(string)
+		if deviceID != "" && host != "" {
 			break
 		}
 	}
@@ -157,7 +158,7 @@ func TestOsquerydLive(t *testing.T) {
 		for _, row := range rows {
 			m, _ := row.(map[string]any)
 			if m["ready"] == "ok" {
-				return
+				goto enrolled
 			}
 		}
 		if got["status"] == "complete" {
@@ -165,6 +166,70 @@ func TestOsquerydLive(t *testing.T) {
 		}
 	}
 	t.Fatalf("timed out waiting for osqueryd results\n%s", tailFile(logPath))
+
+enrolled:
+	logDeadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(logDeadline) {
+		var logs int
+		if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM osquery_status_logs WHERE device_id=$1`, deviceID).Scan(&logs); err != nil {
+			t.Fatal(err)
+		}
+		var results int
+		if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM osquery_result_logs WHERE device_id=$1`, deviceID).Scan(&results); err != nil {
+			t.Fatal(err)
+		}
+		if logs+results > 0 {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	var logs, results int
+	if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM osquery_status_logs WHERE device_id=$1`, deviceID).Scan(&logs); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM osquery_result_logs WHERE device_id=$1`, deviceID).Scan(&results); err != nil {
+		t.Fatal(err)
+	}
+	if logs+results == 0 {
+		t.Fatalf("gzip logger delivered no status or result logs\n%s", tailFile(logPath))
+	}
+
+	var enrolledAt time.Time
+	if err := st.Pool().QueryRow(ctx, `SELECT last_enrolled_at FROM devices WHERE id=$1`, deviceID).Scan(&enrolledAt); err != nil {
+		t.Fatal(err)
+	}
+	invalidated, invalidBody := tlsJSON(t, client, ts.URL, http.MethodPost, "/api/v1/devices/"+deviceID+"/invalidate", "mc_admin", false, `{}`)
+	if invalidated >= 300 {
+		t.Fatalf("invalidate %d %s", invalidated, invalidBody)
+	}
+	deadline = time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case <-exited:
+			t.Fatalf("osqueryd exited during re-enroll\n%s", tailFile(logPath))
+		default:
+		}
+		time.Sleep(time.Second)
+		var n int
+		if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM devices`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("re-enroll device count = %d\n%s", n, tailFile(logPath))
+		}
+		var again time.Time
+		if err := st.Pool().QueryRow(ctx, `SELECT last_enrolled_at FROM devices WHERE id=$1`, deviceID).Scan(&again); err != nil {
+			t.Fatal(err)
+		}
+		if again.After(enrolledAt) {
+			body := tlsMap(t, client, ts.URL, http.MethodGet, "/api/v1/devices/"+deviceID, "mc_admin", false, "")
+			if body["node_invalid"] == true || body["hostname"] == "" {
+				t.Fatalf("re-enroll left the device invalid: %s", mustJSONRaw(body))
+			}
+			return
+		}
+	}
+	t.Fatalf("osqueryd did not re-enroll the same device\n%s", tailFile(logPath))
 }
 
 func tlsJSON(t *testing.T, client *http.Client, base, method, path, token string, terraform bool, body string) (int, string) {

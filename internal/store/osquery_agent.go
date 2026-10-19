@@ -75,9 +75,10 @@ func identityFrom(hostID string, details map[string]any) hostIdentity {
 	osv := asMap(details["os_version"])
 	info := asMap(details["osquery_info"])
 	plat := asMap(details["platform_info"])
-	id := hostIdentity{HostIdentifier: strings.TrimSpace(strings.ReplaceAll(hostID, "\x00", ""))}
-	id.UUID = firstStr(sys["uuid"])
-	id.Serial = firstStr(sys["hardware_serial"])
+	rawHost := strings.TrimSpace(strings.ReplaceAll(hostID, "\x00", ""))
+	id := hostIdentity{HostIdentifier: rawHost}
+	id.UUID = usableHardwareID(firstStr(sys["uuid"]))
+	id.Serial = usableHardwareID(firstStr(sys["hardware_serial"]))
 	id.Hostname = firstStr(sys["hostname"], sys["local_hostname"])
 	id.ComputerName = firstStr(sys["computer_name"], id.Hostname, id.HostIdentifier)
 	if id.Hostname == "" {
@@ -98,7 +99,66 @@ func identityFrom(hostID string, details map[string]any) hostIdentity {
 	id.CPULogical = atoi(firstStr(sys["cpu_logical_cores"]))
 	id.Memory = atoi64(firstStr(sys["physical_memory"]))
 	id.OsqueryVersion = firstStr(info["version"])
+	// Placeholder UUIDs and serials (common on cloned VMs) must not share a device.
+	// Fall back to a real host identifier, then the hostname, and otherwise leave
+	// the key blank so the partial unique index does not collapse them.
+	if id.UUID == "" && id.Serial == "" {
+		switch {
+		case usableHardwareID(rawHost) != "":
+			id.HostIdentifier = rawHost
+		case usableHardwareID(id.Hostname) != "":
+			id.HostIdentifier = id.Hostname
+		default:
+			id.HostIdentifier = ""
+		}
+	}
 	return id
+}
+
+// usableHardwareID drops values that many machines report identically.
+func usableHardwareID(raw string) string {
+	s := strings.TrimSpace(strings.ReplaceAll(raw, "\x00", ""))
+	if s == "" {
+		return ""
+	}
+	folded := strings.ToLower(s)
+	switch folded {
+	case "0", "none", "unknown", "n/a", "na", "null", "nil",
+		"default string", "system serial number", "to be filled by o.e.m.",
+		"to be filled by o.e.m", "not specified", "not set", "invalid",
+		"empty", "serial", "chassis serial number", "oem", "default":
+		return ""
+	}
+	compact := strings.Map(func(r rune) rune {
+		switch r {
+		case '-', ' ', ':', '.':
+			return -1
+		default:
+			return r
+		}
+	}, folded)
+	if len(compact) >= 8 && isHexString(compact) && allSameRune(compact) {
+		return ""
+	}
+	return s
+}
+
+func isHexString(s string) bool {
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func allSameRune(s string) bool {
+	for i := 1; i < len(s); i++ {
+		if s[i] != s[0] {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // EnrollHost checks the enroll secret and returns a node key. A host that presents
@@ -114,7 +174,7 @@ func (s *Store) EnrollHost(ctx context.Context, secret, hostIdentifier string, d
 	id := identityFrom(hostIdentifier, details)
 	var deviceID, nodeKey string
 	var last error
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := 0; attempt < 8; attempt++ {
 		deviceID, nodeKey, last = s.enrollOnce(ctx, id)
 		if last == nil || !isConflict(last) {
 			return deviceID, nodeKey, last
@@ -151,6 +211,14 @@ func (s *Store) enrollOnce(ctx context.Context, id hostIdentity) (string, string
 	}
 	if !found && id.Serial != "" {
 		err = tx.QueryRow(ctx, `SELECT id FROM devices WHERE serial=$1 FOR UPDATE`, id.Serial).Scan(&deviceID)
+		if err == nil {
+			found = true
+		} else if !isNoRows(err) {
+			return "", "", err
+		}
+	}
+	if !found && id.UUID == "" && id.Serial == "" && id.HostIdentifier != "" {
+		err = tx.QueryRow(ctx, `SELECT id FROM devices WHERE host_identifier=$1 AND hardware_uuid='' AND serial='' FOR UPDATE`, id.HostIdentifier).Scan(&deviceID)
 		if err == nil {
 			found = true
 		} else if !isNoRows(err) {
@@ -195,9 +263,9 @@ func (s *Store) enrollOnce(ctx context.Context, id hostIdentity) (string, string
 				hardware_vendor=CASE WHEN $13 <> '' THEN $13 ELSE hardware_vendor END,
 				cpu_brand=CASE WHEN $14 <> '' THEN $14 ELSE cpu_brand END,
 				cpu_type=CASE WHEN $15 <> '' THEN $15 ELSE cpu_type END,
-				cpu_physical_cores=CASE WHEN $16 > 0 THEN $16 ELSE cpu_physical_cores END,
-				cpu_logical_cores=CASE WHEN $17 > 0 THEN $17 ELSE cpu_logical_cores END,
-				physical_memory=CASE WHEN $18 > 0 THEN $18 ELSE physical_memory END,
+				cpu_physical_cores=CASE WHEN $16::int > 0 THEN $16::int ELSE cpu_physical_cores END,
+				cpu_logical_cores=CASE WHEN $17::int > 0 THEN $17::int ELSE cpu_logical_cores END,
+				physical_memory=CASE WHEN $18::bigint > 0 THEN $18::bigint ELSE physical_memory END,
 				osquery_version=CASE WHEN $19 <> '' THEN $19 ELSE osquery_version END,
 				last_enrolled_at=$20, last_seen_at=$20, updated_at=$20
 			WHERE id=$1`,
@@ -363,8 +431,9 @@ func (s *Store) OsqueryConfig(ctx context.Context, nodeKey string, interval time
 		"options": map[string]any{
 			"logger_tls_period":    10,
 			"distributed_interval": 10,
-			"config_refresh":       30,
-			// osquery defaults this to true, which never polls distributed read.
+			// config_refresh is CLI-only in osquery 5.x. Sending it in options
+			// makes osquery log a warning and ignore the value.
+			// osquery defaults disable_distributed to true, which never polls distributed read.
 			"disable_distributed": false,
 		},
 	}
@@ -580,30 +649,26 @@ func (s *Store) applyResults(ctx context.Context, tx pgx.Tx, dev *storedDevice, 
 		})
 	}
 	for _, name := range order {
-		prev, err := loadQueryRows(ctx, tx, dev.ID, name)
+		prev, err := loadQueryState(ctx, tx, dev.ID, name)
 		if err != nil {
 			return nil, err
 		}
-		rows := prev
-		for _, it := range groups[name] {
-			if it.Snapshot {
-				rows = it.Rows
-				continue
-			}
-			if it.Action == "removed" {
-				rows = removeColumnRow(rows, it.Columns)
-			} else {
-				rows = append(rows, it.Columns)
-			}
-		}
-		if rows == nil {
-			rows = []map[string]string{}
-		}
-		if err := saveQueryRows(ctx, tx, dev.ID, name, rows, now); err != nil {
+		final, steps := reduceQueryResults(name, prev, groups[name])
+		if err := saveQueryState(ctx, tx, dev.ID, name, final, now); err != nil {
 			return nil, err
 		}
-		if err := s.interpretQuery(ctx, tx, dev, name, rows); err != nil {
-			return nil, err
+		for _, step := range steps {
+			rows := step.rows
+			if step.widenApps && name == osquery.QApps {
+				apps, err := loadApps(ctx, tx, dev.ID)
+				if err != nil {
+					return nil, err
+				}
+				rows = unionAppRows(appsToRows(apps), rows)
+			}
+			if err := s.interpretQuery(ctx, tx, dev, name, rows); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return events, nil
