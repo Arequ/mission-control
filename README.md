@@ -1,8 +1,8 @@
 # Mission Control
 
-API-first Munki and AutoPkg for a Mac fleet. The server is a stateless Go service on Postgres. Configuration is applied by Terraform, not edited in the UI. AutoPkg runs on Macs through `mc-runner`, which only makes outbound calls.
+API-first Munki, AutoPkg, and osquery inventory for a Mac fleet. The server is a stateless Go service on Postgres. Configuration is applied by Terraform, not edited in the UI. AutoPkg runs on Macs through `mc-runner`, which only makes outbound calls. osqueryd uses the TLS remote API.
 
-The broader system (osquery, a unified device view, logs, vulnerabilities) is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). This repository is the Munki and AutoPkg slice.
+The broader system (a unified device view, logs, vulnerabilities) is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quickstart
 
@@ -22,7 +22,9 @@ export TF_CLI_CONFIG_FILE="$PWD/bin/dev.tfrc"
 terraform -chdir=examples/terraform apply -auto-approve
 ```
 
-That creates a runner pool, the AutoPkg recipe repo, a Firefox override, a 06:15 schedule, fleet pipeline limits, a 7-day promotion from `testing` to `production`, and two Munki manifests. Dev overrides skip the Terraform registry, so you do not need `terraform init`.
+That creates a runner pool, the AutoPkg recipe repo, a Firefox override, a 06:15 schedule, fleet pipeline limits, a 7-day promotion from `testing` to `production`, two Munki manifests, an osquery enroll secret, labels, a query, and a pack. Dev overrides skip the Terraform registry, so you do not need `terraform init`.
+
+Apply the example stack to a database that was not seeded. `MC_DEV_SEED=1` already inserts resources with those names, including the local enroll secret `mc_dev_enroll_secret`. The example variable `enroll_secret` defaults to `example-enroll-secret`. Both values are local placeholders.
 
 Start a runner with the fake executor (this is what CI and Linux use; on a Mac, pass `--autopkg autopkg` and `--sync-repos`):
 
@@ -56,6 +58,8 @@ Promotion to production happens after `soak_days` (7 in the example). To see it 
 
 Munki clients use `http://munki:mc_dev_repo_token@localhost:8080/repo` as the repo URL. Catalogs are at `/repo/catalogs/testing` and `/repo/catalogs/production`.
 
+osqueryd enrolls at the same host. The server speaks HTTP; put TLS in front, or point `--tls_server_certs` at a certificate you terminate locally. With the dev seed, the enroll secret file contains `mc_dev_enroll_secret`. A seeded fleet of about forty Macs is already in the UI. A host that enrolls for real shows up next to them. Packs and labels from Terraform are delivered on `POST /config`. Live queries from the UI are delivered on the distributed read/write endpoints.
+
 `docker compose --profile runner up --build` also starts a fake runner on the compose network. It idles until a recipe and a job exist.
 
 ## Without Docker
@@ -75,7 +79,7 @@ make server
 make test
 ```
 
-Covers fleet concurrency and per-runner parallelism, label and pool matching, lease expiry and retry, cron enqueue, catalog generation, soak promotion and manual hold, an end-to-end runner against the HTTP API, and `terraform apply` / update / plan / destroy of `examples/terraform` against a test server.
+Covers fleet concurrency and per-runner parallelism, label and pool matching, lease expiry and retry, cron enqueue, catalog generation, soak promotion and manual hold, an end-to-end runner against the HTTP API, the osquery enroll/config/log/distributed round trip (including node invalidation and re-enrollment), and `terraform apply` / update / plan / import / destroy of `examples/terraform` against a test server. `TestOsquerydLive` runs a real `osqueryd` when the binary is on `PATH` and skips otherwise.
 
 `TEST_DATABASE_ADMIN` overrides the admin connection string used to create throwaway databases. The default is `postgres://missioncontrol:missioncontrol@127.0.0.1:5432/postgres?sslmode=disable`.
 

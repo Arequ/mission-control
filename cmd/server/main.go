@@ -13,6 +13,7 @@ import (
 	"github.com/Arequ/mission-control/internal/clock"
 	"github.com/Arequ/mission-control/internal/config"
 	"github.com/Arequ/mission-control/internal/httpapi"
+	"github.com/Arequ/mission-control/internal/osquery"
 	"github.com/Arequ/mission-control/internal/storage"
 	"github.com/Arequ/mission-control/internal/store"
 )
@@ -77,15 +78,22 @@ func main() {
 		}
 	}
 
+	var sink osquery.Forwarder = osquery.NopForwarder{}
+	if cfg.ElasticURL != "" {
+		sink = osquery.ElasticForwarder{URL: cfg.ElasticURL, Index: cfg.ElasticIndex, APIKey: cfg.ElasticAPIKey, HTTP: &http.Client{Timeout: 3 * time.Second}}
+		log.Info("osquery results forwarding to elastic", "index", cfg.ElasticIndex)
+	}
 	srv := httpapi.New(httpapi.Options{
-		Store:        st,
-		Blobs:        blobs,
-		Logger:       log,
-		WebDir:       cfg.WebDir,
-		RepoToken:    cfg.RepoToken,
-		DevCORS:      cfg.DevCORS,
-		OfflineAfter: cfg.OfflineAfter,
-		MaxUpload:    cfg.MaxUploadBytes,
+		Store:             st,
+		Blobs:             blobs,
+		Logger:            log,
+		WebDir:            cfg.WebDir,
+		RepoToken:         cfg.RepoToken,
+		DevCORS:           cfg.DevCORS,
+		OfflineAfter:      cfg.OfflineAfter,
+		MaxUpload:         cfg.MaxUploadBytes,
+		InventoryInterval: cfg.InventoryInterval,
+		Forwarder:         sink,
 	})
 	if err := srv.Tick(ctx); err != nil {
 		log.Error("initial scheduler tick", "err", err)

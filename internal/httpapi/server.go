@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Arequ/mission-control/internal/model"
+	"github.com/Arequ/mission-control/internal/osquery"
 	"github.com/Arequ/mission-control/internal/storage"
 	"github.com/Arequ/mission-control/internal/store"
 )
@@ -28,18 +29,22 @@ type Server struct {
 	devCORS      bool
 	offlineAfter time.Duration
 	maxUpload    int64
+	inventory    time.Duration
+	forward      osquery.Forwarder
 }
 
 // Options configures the server.
 type Options struct {
-	Store        *store.Store
-	Blobs        storage.Storage
-	Logger       *slog.Logger
-	WebDir       string
-	RepoToken    string
-	DevCORS      bool
-	OfflineAfter time.Duration
-	MaxUpload    int64
+	Store             *store.Store
+	Blobs             storage.Storage
+	Logger            *slog.Logger
+	WebDir            string
+	RepoToken         string
+	DevCORS           bool
+	OfflineAfter      time.Duration
+	MaxUpload         int64
+	InventoryInterval time.Duration
+	Forwarder         osquery.Forwarder
 }
 
 // New builds a server.
@@ -53,6 +58,12 @@ func New(opts Options) *Server {
 	if opts.MaxUpload == 0 {
 		opts.MaxUpload = 512 << 20
 	}
+	if opts.InventoryInterval == 0 {
+		opts.InventoryInterval = 5 * time.Minute
+	}
+	if opts.Forwarder == nil {
+		opts.Forwarder = osquery.NopForwarder{}
+	}
 	return &Server{
 		store:        opts.Store,
 		blobs:        opts.Blobs,
@@ -62,6 +73,8 @@ func New(opts Options) *Server {
 		devCORS:      opts.DevCORS,
 		offlineAfter: opts.OfflineAfter,
 		maxUpload:    opts.MaxUpload,
+		inventory:    opts.InventoryInterval,
+		forward:      opts.Forwarder,
 	}
 }
 
@@ -73,8 +86,10 @@ func (s *Server) Tick(ctx context.Context) error {
 	if _, _, err := s.store.ReclaimExpired(ctx); err != nil {
 		return err
 	}
-	_, err := s.store.PromoteDue(ctx)
-	return err
+	if _, err := s.store.PromoteDue(ctx); err != nil {
+		return err
+	}
+	return s.store.ExpireLiveQueries(ctx)
 }
 
 // Handler is the root HTTP handler.
@@ -132,6 +147,44 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/manifests/{id}", s.withAPI("config:read", http.HandlerFunc(s.getManifest)))
 	mux.Handle("PUT /api/v1/manifests/{id}", s.withConfigWrite(http.HandlerFunc(s.updateManifest)))
 	mux.Handle("DELETE /api/v1/manifests/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteManifest)))
+
+	mux.Handle("GET /api/v1/osquery/queries", s.withAPI("config:read", http.HandlerFunc(s.listOsqueryQueries)))
+	mux.Handle("POST /api/v1/osquery/queries", s.withConfigWrite(http.HandlerFunc(s.createOsqueryQuery)))
+	mux.Handle("GET /api/v1/osquery/queries/{id}", s.withAPI("config:read", http.HandlerFunc(s.getOsqueryQuery)))
+	mux.Handle("PUT /api/v1/osquery/queries/{id}", s.withConfigWrite(http.HandlerFunc(s.updateOsqueryQuery)))
+	mux.Handle("DELETE /api/v1/osquery/queries/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteOsqueryQuery)))
+
+	mux.Handle("GET /api/v1/osquery/packs", s.withAPI("config:read", http.HandlerFunc(s.listOsqueryPacks)))
+	mux.Handle("POST /api/v1/osquery/packs", s.withConfigWrite(http.HandlerFunc(s.createOsqueryPack)))
+	mux.Handle("GET /api/v1/osquery/packs/{id}", s.withAPI("config:read", http.HandlerFunc(s.getOsqueryPack)))
+	mux.Handle("PUT /api/v1/osquery/packs/{id}", s.withConfigWrite(http.HandlerFunc(s.updateOsqueryPack)))
+	mux.Handle("DELETE /api/v1/osquery/packs/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteOsqueryPack)))
+
+	mux.Handle("GET /api/v1/osquery/labels", s.withAPI("config:read", http.HandlerFunc(s.listOsqueryLabels)))
+	mux.Handle("POST /api/v1/osquery/labels", s.withConfigWrite(http.HandlerFunc(s.createOsqueryLabel)))
+	mux.Handle("GET /api/v1/osquery/labels/{id}", s.withAPI("config:read", http.HandlerFunc(s.getOsqueryLabel)))
+	mux.Handle("PUT /api/v1/osquery/labels/{id}", s.withConfigWrite(http.HandlerFunc(s.updateOsqueryLabel)))
+	mux.Handle("DELETE /api/v1/osquery/labels/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteOsqueryLabel)))
+
+	mux.Handle("GET /api/v1/osquery/enroll-secrets", s.withAPI("config:read", http.HandlerFunc(s.listEnrollSecrets)))
+	mux.Handle("POST /api/v1/osquery/enroll-secrets", s.withConfigWrite(http.HandlerFunc(s.createEnrollSecret)))
+	mux.Handle("GET /api/v1/osquery/enroll-secrets/{id}", s.withAPI("config:read", http.HandlerFunc(s.getEnrollSecret)))
+	mux.Handle("PUT /api/v1/osquery/enroll-secrets/{id}", s.withConfigWrite(http.HandlerFunc(s.updateEnrollSecret)))
+	mux.Handle("DELETE /api/v1/osquery/enroll-secrets/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteEnrollSecret)))
+
+	mux.Handle("GET /api/v1/fleet/summary", s.withAPI("osquery:read", http.HandlerFunc(s.fleetSummary)))
+	mux.Handle("GET /api/v1/devices", s.withAPI("osquery:read", http.HandlerFunc(s.listDevices)))
+	mux.Handle("GET /api/v1/devices/{id}", s.withAPI("osquery:read", http.HandlerFunc(s.getDevice)))
+	mux.Handle("GET /api/v1/devices/{id}/results", s.withAPI("osquery:read", http.HandlerFunc(s.listDeviceResults)))
+	mux.Handle("POST /api/v1/devices/{id}/invalidate", s.withAPI("osquery:write", http.HandlerFunc(s.invalidateDevice)))
+	mux.Handle("POST /api/v1/live-queries", s.withAPI("osquery:write", http.HandlerFunc(s.createLiveQuery)))
+	mux.Handle("GET /api/v1/live-queries/{id}", s.withAPI("osquery:read", http.HandlerFunc(s.getLiveQuery)))
+
+	mux.HandleFunc("POST /enroll", s.osqueryEnroll)
+	mux.HandleFunc("POST /config", s.osqueryConfig)
+	mux.HandleFunc("POST /logger", s.osqueryLogger)
+	mux.HandleFunc("POST /distributed_read", s.osqueryDistributedRead)
+	mux.HandleFunc("POST /distributed_write", s.osqueryDistributedWrite)
 
 	mux.Handle("GET /api/v1/runners", s.withAPI("runners:read", http.HandlerFunc(s.listRunners)))
 	mux.Handle("DELETE /api/v1/runners/{id}", s.withAPI("runners:write", http.HandlerFunc(s.deleteRunner)))

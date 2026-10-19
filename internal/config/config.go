@@ -32,6 +32,10 @@ type Config struct {
 	LogLevel          string
 	OfflineAfter      time.Duration
 	MaxUploadBytes    int64
+	InventoryInterval time.Duration
+	ElasticURL        string
+	ElasticIndex      string
+	ElasticAPIKey     string
 }
 
 // Load reads configuration from the environment.
@@ -57,6 +61,10 @@ func Load() (Config, error) {
 		LogLevel:          getenv("MC_LOG_LEVEL", "info"),
 		OfflineAfter:      45 * time.Second,
 		MaxUploadBytes:    512 << 20,
+		InventoryInterval: 5 * time.Minute,
+		ElasticURL:        os.Getenv("MC_ELASTIC_URL"),
+		ElasticIndex:      getenv("MC_ELASTIC_INDEX", "osquery-results"),
+		ElasticAPIKey:     os.Getenv("MC_ELASTIC_API_KEY"),
 	}
 	if v := os.Getenv("MC_OFFLINE_AFTER"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -78,6 +86,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("MC_SCHEDULER_INTERVAL: %w", err)
 		}
 		cfg.SchedulerInterval = d
+	}
+	if v := os.Getenv("MC_INVENTORY_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("MC_INVENTORY_INTERVAL: %w", err)
+		}
+		cfg.InventoryInterval = d
 	}
 	if v := os.Getenv("MC_MAX_UPLOAD_BYTES"); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)

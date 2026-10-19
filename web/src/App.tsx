@@ -3,7 +3,11 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { getToken, setToken } from "./api";
 import { Icon } from "./icons";
 import { AutopkgPage } from "./pages/Autopkg";
+import { DevicePage } from "./pages/Device";
+import { DevicesPage } from "./pages/Devices";
 import { ManifestsPage, MunkiPage } from "./pages/Munki";
+import { OverviewPage } from "./pages/Overview";
+import { LiveQueryPage, QueriesPage } from "./pages/Queries";
 import { RunnersPage } from "./pages/Runners";
 import { RunDetailPage, RunsPage } from "./pages/Runs";
 import { SettingsPage } from "./pages/Settings";
@@ -23,7 +27,14 @@ function Authed() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<AutopkgPage />} />
+        <Route index element={<OverviewPage />} />
+        <Route path="devices" element={<DevicesPage />} />
+        <Route path="devices/:id" element={<DevicePage />} />
+        <Route path="devices/:id/software" element={<DevicePage />} />
+        <Route path="devices/:id/queries" element={<DevicePage />} />
+        <Route path="queries" element={<QueriesPage />} />
+        <Route path="queries/live" element={<LiveQueryPage />} />
+        <Route path="autopkg" element={<AutopkgPage />} />
         <Route path="runs" element={<RunsPage />} />
         <Route path="runs/:id" element={<RunDetailPage />} />
         <Route path="runners" element={<RunnersPage />} />

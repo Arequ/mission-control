@@ -17,6 +17,13 @@ variable "max_concurrency" {
   default     = 2
 }
 
+variable "enroll_secret" {
+  description = "osquery enroll secret. This example value is a placeholder for local applies, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-enroll-secret"
+}
+
 variable "soak_days" {
   description = "Days a package stays in the testing catalog before promotion. Use 0 to promote on the next scheduler tick."
   type        = number

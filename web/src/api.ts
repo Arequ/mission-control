@@ -106,6 +106,105 @@ export type PromotionRule = {
   managed_by: string;
 };
 
+export type FleetSummary = {
+  total_devices: number;
+  online_devices: number;
+  enrolled_this_week: number;
+  offline_after_seconds: number;
+  macos_versions: { version: string; name: string; count: number }[];
+  autopkg: {
+    recipes: number;
+    enabled: number;
+    testing_packages: number;
+    production_packages: number;
+    last_recipe?: string;
+    last_result?: string;
+    last_finished_at?: string;
+  };
+};
+
+export type DeviceApp = { name: string; path: string; bundle_id: string; version: string };
+
+export type DeviceEvent = {
+  id: number;
+  at: string;
+  action: string;
+  detail: Record<string, unknown>;
+};
+
+export type Device = {
+  id: string;
+  hostname: string;
+  computer_name: string;
+  serial: string;
+  platform: string;
+  os_version: string;
+  os_build: string;
+  os_display?: string;
+  hardware_model: string;
+  model_name?: string;
+  cpu_brand: string;
+  cpu_type: string;
+  cpu_physical_cores: number;
+  physical_memory: number;
+  primary_ip: string;
+  primary_mac: string;
+  username: string;
+  disk_encrypted: boolean | null;
+  uptime_seconds: number;
+  osquery_version: string;
+  last_seen_at?: string;
+  enrolled_at: string;
+  status?: string;
+  labels?: string[];
+  apps?: DeviceApp[];
+  events?: DeviceEvent[];
+};
+
+export type OsqueryQuery = {
+  id: string;
+  name: string;
+  description: string;
+  sql: string;
+  platform: string;
+  interval: number;
+  snapshot: boolean;
+  removed: boolean;
+  scheduled: boolean;
+  managed_by: string;
+};
+
+export type OsqueryPack = {
+  id: string;
+  name: string;
+  description: string;
+  platform: string;
+  interval?: number;
+  labels: string[];
+  queries?: { name: string; interval: number; snapshot: boolean }[];
+  enabled: boolean;
+  managed_by: string;
+};
+
+export type OsqueryLabel = {
+  id: string;
+  name: string;
+  description: string;
+  kind: string;
+  members?: number;
+};
+
+export type LiveQuery = {
+  id: string;
+  sql: string;
+  status: string;
+  timeout_seconds: number;
+  created_at: string;
+  finished_at?: string;
+  targets?: { device_id: string; hostname?: string; computer_name?: string; status: string; error?: string }[];
+  rows?: Record<string, string>[];
+};
+
 const TOKEN_KEY = "mc.token";
 
 export function getToken(): string {
@@ -157,4 +256,20 @@ export const api = {
   packages: () => request<{ packages: Package[] }>("/api/v1/packages"),
   manifests: () => request<{ manifests: Manifest[] }>("/api/v1/manifests"),
   rules: () => request<{ promotion_rules: PromotionRule[] }>("/api/v1/promotion-rules"),
+  summary: () => request<FleetSummary>("/api/v1/fleet/summary"),
+  devices: (params: { q?: string; status?: string; label?: string; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (params.q) q.set("q", params.q);
+    if (params.status) q.set("status", params.status);
+    if (params.label) q.set("label", params.label);
+    q.set("limit", String(params.limit ?? 100));
+    return request<{ devices: Device[]; total: number }>(`/api/v1/devices?${q}`);
+  },
+  device: (id: string) => request<Device>(`/api/v1/devices/${id}`),
+  queries: () => request<{ queries: OsqueryQuery[] }>("/api/v1/osquery/queries"),
+  packs: () => request<{ packs: OsqueryPack[] }>("/api/v1/osquery/packs"),
+  labels: () => request<{ labels: OsqueryLabel[] }>("/api/v1/osquery/labels"),
+  runLive: (body: { sql: string; device_ids?: string[]; labels?: string[]; timeout_seconds: number }) =>
+    request<LiveQuery>("/api/v1/live-queries", { method: "POST", body: JSON.stringify(body) }),
+  liveQuery: (id: string) => request<LiveQuery>(`/api/v1/live-queries/${id}`),
 };
