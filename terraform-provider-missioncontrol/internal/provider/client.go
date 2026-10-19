@@ -275,3 +275,48 @@ func (c *Client) UpdateManifest(ctx context.Context, id string, in manifestAPI) 
 func (c *Client) DeleteManifest(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/api/v1/manifests/"+id, nil, nil)
 }
+
+type cpeOverrideAPI struct {
+	BundleID      string `json:"bundle_id"`
+	Name          string `json:"name"`
+	Vendor        string `json:"vendor"`
+	Product       string `json:"product"`
+	Part          string `json:"part"`
+	VersionSource string `json:"version_source"`
+}
+
+type vulnSettingsAPI struct {
+	ID              string           `json:"id,omitempty"`
+	NVDEnabled      bool             `json:"nvd_enabled"`
+	KEVEnabled      bool             `json:"kev_enabled"`
+	EPSSEnabled     bool             `json:"epss_enabled"`
+	AppleEnabled    bool             `json:"apple_enabled"`
+	Rapid7Enabled   bool             `json:"rapid7_enabled"`
+	SyncCron        string           `json:"sync_cron"`
+	Timezone        string           `json:"timezone"`
+	HasNVDAPIKey    bool             `json:"has_nvd_api_key"`
+	NVDAPIKey       string           `json:"nvd_api_key,omitempty"`
+	SLACriticalDays int              `json:"sla_critical_days"`
+	SLAHighDays     int              `json:"sla_high_days"`
+	SLAMediumDays   int              `json:"sla_medium_days"`
+	SLALowDays      int              `json:"sla_low_days"`
+	SLAKEVDays      int              `json:"sla_kev_days"`
+	Overrides       []cpeOverrideAPI `json:"cpe_overrides"`
+	ManagedBy       string           `json:"managed_by,omitempty"`
+}
+
+func (c *Client) GetVulnerabilitySettings(ctx context.Context) (vulnSettingsAPI, error) {
+	var out vulnSettingsAPI
+	err := c.do(ctx, http.MethodGet, "/api/v1/vulnerability-settings", nil, &out)
+	return out, err
+}
+
+func (c *Client) UpdateVulnerabilitySettings(ctx context.Context, in vulnSettingsAPI) (vulnSettingsAPI, error) {
+	var out vulnSettingsAPI
+	err := c.do(ctx, http.MethodPut, "/api/v1/vulnerability-settings", in, &out)
+	return out, err
+}
+
+func (c *Client) ResetVulnerabilitySettings(ctx context.Context) error {
+	return c.do(ctx, http.MethodDelete, "/api/v1/vulnerability-settings", nil, &vulnSettingsAPI{})
+}

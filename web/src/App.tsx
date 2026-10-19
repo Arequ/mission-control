@@ -12,6 +12,7 @@ import { RunnersPage } from "./pages/Runners";
 import { RunDetailPage, RunsPage } from "./pages/Runs";
 import { CoverageConnectorsPage, CoverageDevicePage, CoveragePage } from "./pages/Coverage";
 import { LogViewerPage, LogsPage } from "./pages/Logs";
+import { VulnerabilitiesPage } from "./pages/Vulnerabilities";
 import { SettingsPage } from "./pages/Settings";
 import { Layout, Providers, useTheme } from "./ui";
 
@@ -34,6 +35,9 @@ function Authed() {
         <Route path="devices/:id" element={<DevicePage />} />
         <Route path="devices/:id/software" element={<DevicePage />} />
         <Route path="devices/:id/queries" element={<DevicePage />} />
+        <Route path="devices/:id/vulnerabilities" element={<DevicePage />} />
+        <Route path="vulnerabilities" element={<VulnerabilitiesPage />} />
+        <Route path="vulnerabilities/:id" element={<VulnerabilitiesPage />} />
         <Route path="coverage" element={<CoveragePage />} />
         <Route path="coverage/connectors" element={<CoverageConnectorsPage />} />
         <Route path="coverage/devices/:id" element={<CoverageDevicePage />} />

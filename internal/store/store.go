@@ -13,6 +13,7 @@ import (
 	"github.com/Arequ/mission-control/internal/clock"
 	"github.com/Arequ/mission-control/internal/db"
 	"github.com/Arequ/mission-control/internal/model"
+	"github.com/Arequ/mission-control/internal/vuln"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,9 +25,11 @@ var refRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./+\-]{0,200}$`)
 
 // Store talks to Postgres.
 type Store struct {
-	pool *pgxpool.Pool
-	mu   sync.RWMutex
-	clk  clock.Clock
+	pool       *pgxpool.Pool
+	mu         sync.RWMutex
+	clk        clock.Clock
+	feeds      vuln.Feeds
+	vulnSyncMu sync.Mutex
 }
 
 // Open connects, pings, and migrates.
@@ -61,6 +64,20 @@ func (s *Store) SetClock(c clock.Clock) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.clk = c
+}
+
+// SetVulnerabilityFeeds enables scheduled feed sync. Tests leave it unset so
+// a tick never calls NVD, CISA, FIRST, or Apple.
+func (s *Store) SetVulnerabilityFeeds(f vuln.Feeds) {
+	s.mu.Lock()
+	s.feeds = f
+	s.mu.Unlock()
+}
+
+func (s *Store) vulnerabilityFeeds() vuln.Feeds {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.feeds
 }
 
 func (s *Store) now() time.Time {

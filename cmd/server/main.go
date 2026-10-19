@@ -16,6 +16,7 @@ import (
 	"github.com/Arequ/mission-control/internal/osquery"
 	"github.com/Arequ/mission-control/internal/storage"
 	"github.com/Arequ/mission-control/internal/store"
+	"github.com/Arequ/mission-control/internal/vuln"
 )
 
 func main() {
@@ -77,6 +78,7 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	st.SetVulnerabilityFeeds(vuln.Feeds{HTTP: &http.Client{Timeout: 20 * time.Second}})
 
 	var sink osquery.Forwarder = osquery.NopForwarder{}
 	if cfg.ElasticURL != "" {

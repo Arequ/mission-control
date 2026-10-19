@@ -116,10 +116,11 @@ type Device struct {
 
 // DeviceApp is one installed application from the latest inventory snapshot.
 type DeviceApp struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	BundleID string `json:"bundle_id"`
-	Version  string `json:"version"`
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	BundleID      string `json:"bundle_id"`
+	Version       string `json:"version"`
+	BundleVersion string `json:"bundle_version,omitempty"`
 }
 
 // DeviceListFilter selects a page of devices.

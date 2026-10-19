@@ -20,7 +20,9 @@ export type IconName =
   | "layout"
   | "terminal"
   | "shield"
-  | "logs";
+  | "logs"
+  | "flame"
+  | "pr";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const p: SVGProps<SVGSVGElement> = {
@@ -183,6 +185,21 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
           <path d="M3 6h.01" />
           <path d="M3 12h.01" />
           <path d="M3 18h.01" />
+        </svg>
+      );
+    case "flame":
+      return (
+        <svg {...p}>
+          <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+        </svg>
+      );
+    case "pr":
+      return (
+        <svg {...p}>
+          <circle cx="18" cy="18" r="3" />
+          <circle cx="6" cy="6" r="3" />
+          <path d="M13 6h3a2 2 0 0 1 2 2v7" />
+          <path d="M6 9v12" />
         </svg>
       );
   }

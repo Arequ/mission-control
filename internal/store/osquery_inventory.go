@@ -541,10 +541,14 @@ func normalizeApps(rows []map[string]string) []model.DeviceApp {
 	out := []model.DeviceApp{}
 	for _, row := range rows {
 		app := model.DeviceApp{
-			Name:     firstStr(row["name"], row["bundle_name"]),
-			Path:     firstStr(row["path"]),
-			BundleID: firstStr(row["bundle_identifier"], row["bundle_id"]),
-			Version:  firstStr(row["bundle_short_version"], row["bundle_version"], row["version"]),
+			Name:          firstStr(row["name"], row["bundle_name"]),
+			Path:          firstStr(row["path"]),
+			BundleID:      firstStr(row["bundle_identifier"], row["bundle_id"]),
+			BundleVersion: firstStr(row["bundle_version"]),
+			Version:       firstStr(row["bundle_short_version"], row["version"]),
+		}
+		if app.Version == "" {
+			app.Version = app.BundleVersion
 		}
 		if app.Path == "" {
 			app.Path = app.BundleID
@@ -558,6 +562,9 @@ func normalizeApps(rows []map[string]string) []model.DeviceApp {
 		if i, ok := seen[app.Path]; ok {
 			if app.Version == "" {
 				app.Version = out[i].Version
+			}
+			if app.BundleVersion == "" {
+				app.BundleVersion = out[i].BundleVersion
 			}
 			if app.Name == "" {
 				app.Name = out[i].Name
@@ -600,18 +607,22 @@ func retainVersions(prev, next []model.DeviceApp) []model.DeviceApp {
 		old[app.Path] = app
 	}
 	for i, app := range next {
-		if app.Version != "" {
-			continue
+		if app.Version == "" {
+			if was, ok := old[app.Path]; ok && was.Version != "" {
+				next[i].Version = was.Version
+			}
 		}
-		if was, ok := old[app.Path]; ok && was.Version != "" {
-			next[i].Version = was.Version
+		if app.BundleVersion == "" {
+			if was, ok := old[app.Path]; ok && was.BundleVersion != "" {
+				next[i].BundleVersion = was.BundleVersion
+			}
 		}
 	}
 	return next
 }
 
 func loadApps(ctx context.Context, tx pgx.Tx, deviceID string) ([]model.DeviceApp, error) {
-	rows, err := tx.Query(ctx, `SELECT name, path, bundle_id, version FROM device_apps WHERE device_id=$1 ORDER BY path`, deviceID)
+	rows, err := tx.Query(ctx, `SELECT name, path, bundle_id, version, bundle_version FROM device_apps WHERE device_id=$1 ORDER BY path`, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -619,7 +630,7 @@ func loadApps(ctx context.Context, tx pgx.Tx, deviceID string) ([]model.DeviceAp
 	out := []model.DeviceApp{}
 	for rows.Next() {
 		var a model.DeviceApp
-		if err := rows.Scan(&a.Name, &a.Path, &a.BundleID, &a.Version); err != nil {
+		if err := rows.Scan(&a.Name, &a.Path, &a.BundleID, &a.Version, &a.BundleVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -638,6 +649,7 @@ func saveApps(ctx context.Context, tx pgx.Tx, deviceID string, apps []model.Devi
 	paths := make([]string, len(apps))
 	bundles := make([]string, len(apps))
 	versions := make([]string, len(apps))
+	bundleVersions := make([]string, len(apps))
 	ids := make([]string, len(apps))
 	for i, a := range apps {
 		ids[i] = deviceID
@@ -645,11 +657,12 @@ func saveApps(ctx context.Context, tx pgx.Tx, deviceID string, apps []model.Devi
 		paths[i] = a.Path
 		bundles[i] = a.BundleID
 		versions[i] = a.Version
+		bundleVersions[i] = a.BundleVersion
 	}
 	_, err := tx.Exec(ctx, `
-		INSERT INTO device_apps (device_id, name, path, bundle_id, version)
-		SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[])`,
-		ids, names, paths, bundles, versions)
+		INSERT INTO device_apps (device_id, name, path, bundle_id, version, bundle_version)
+		SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])`,
+		ids, names, paths, bundles, versions, bundleVersions)
 	return err
 }
 

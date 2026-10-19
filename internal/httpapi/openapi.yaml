@@ -16,9 +16,13 @@ info:
     and offset, and return total.
     Scopes include osquery:read and osquery:write. Live queries and node
     invalidation are operational and do not require the Terraform client header.
-    Coverage reads use osquery:read. Log view runs use logs:read. Source connectors are configuration:
+    Coverage reads use osquery:read. Vulnerability reads use vuln:read and
+    vulnerability updates use vuln:write. Log view runs use logs:read. Source connectors are configuration:
     writes require config:write and the Terraform client header. Connector
-    credentials are write-only and are never returned.
+    credentials are write-only and are never returned. The NVD API key on
+    vulnerability settings is write-only and is never returned. An empty key
+    on update keeps the stored key. Promotion of a vulnerable package is a
+    pull request against Arequ/terraform-mission-control, not an API call.
 servers:
   - url: /
 security:
@@ -29,6 +33,7 @@ tags:
   - name: runners
   - name: munki
   - name: osquery
+  - name: vuln
   - name: meta
 paths:
   /healthz:
@@ -980,6 +985,83 @@ paths:
       summary: osquery distributed write. Stores live query results.
       responses:
         "200": { description: accepted or node_invalid }
+  /api/v1/vulnerability-settings:
+    get:
+      tags: [config]
+      summary: Read vulnerability feed settings. The NVD API key is not returned.
+      responses:
+        "200": { description: settings }
+    put:
+      tags: [config]
+      summary: Replace vulnerability settings. Requires the Terraform client header. An empty nvd_api_key keeps the stored key.
+      responses:
+        "200": { description: settings }
+    delete:
+      tags: [config]
+      summary: Reset vulnerability settings and drop the NVD API key. Requires the Terraform client header.
+      responses:
+        "200": { description: defaults }
+  /api/v1/vulnerability-issues:
+    get:
+      tags: [vuln]
+      summary: List vulnerability issues, prioritized by KEV, EPSS, CVSS, then device count.
+      parameters:
+        - { name: kev, in: query, schema: { type: boolean } }
+        - { name: severity, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: has_fix, in: query, schema: { type: boolean } }
+        - { name: active, in: query, schema: { type: boolean } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+        - { name: offset, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: issues and summary }
+  /api/v1/vulnerability-issues/{id}:
+    get:
+      tags: [vuln]
+      summary: One issue, affected devices, fix path, and timeline.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: issue }
+    post:
+      tags: [vuln]
+      summary: Update status, assignee, or notes. Requires the current revision. Risk acceptance needs an expiry.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: issue }
+        "409": { description: stale revision }
+  /api/v1/vulnerability-issues/{id}/notes:
+    post:
+      tags: [vuln]
+      summary: Add a note to the issue timeline.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: issue }
+  /api/v1/vulnerability-issues/{id}/run-recipe:
+    post:
+      tags: [vuln]
+      summary: Enqueue the AutoPKG recipe linked to this issue. Does not promote a catalog.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "201": { description: job }
+  /api/v1/vulnerabilities/sync:
+    post:
+      tags: [vuln]
+      summary: Run one feed sync now. No-ops the network when feeds are not configured on the server.
+      responses:
+        "200": { description: settings }
+  /api/v1/devices/{id}/vulnerabilities:
+    get:
+      tags: [vuln]
+      summary: Active vulnerability issues for one device.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200": { description: issues }
 components:
   securitySchemes:
     bearerAuth:
