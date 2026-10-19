@@ -130,7 +130,7 @@ func TestFleetConcurrencyAndPerRunnerParallelism(t *testing.T) {
 	if again != nil {
 		t.Fatal("runner a exceeded per-runner parallelism")
 	}
-	if _, err := s.CompleteJob(ctx, l1.JobID, a.ID, "no_change", ""); err != nil {
+	if _, err := s.CompleteJob(ctx, l1.JobID, a.ID, l1.Attempt, "no_change", ""); err != nil {
 		t.Fatal(err)
 	}
 	l3, err = s.Lease(ctx, c.ID)
@@ -258,7 +258,7 @@ func TestRunnerErrorRetriesThenFails(t *testing.T) {
 	if err != nil || lease == nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CompleteJob(ctx, lease.JobID, rn.ID, "error", "autopkg failed"); err != nil {
+	if _, err := s.CompleteJob(ctx, lease.JobID, rn.ID, lease.Attempt, "error", "autopkg failed"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetJob(ctx, job.ID, false)
@@ -272,7 +272,7 @@ func TestRunnerErrorRetriesThenFails(t *testing.T) {
 	if err != nil || lease == nil {
 		t.Fatal(err)
 	}
-	if _, err := s.CompleteJob(ctx, lease.JobID, rn.ID, "error", "autopkg failed"); err != nil {
+	if _, err := s.CompleteJob(ctx, lease.JobID, rn.ID, lease.Attempt, "error", "autopkg failed"); err != nil {
 		t.Fatal(err)
 	}
 	got, err = s.GetJob(ctx, job.ID, false)
@@ -307,7 +307,7 @@ func TestEnqueueDueFollowsCron(t *testing.T) {
 	if err != nil || n != 0 {
 		t.Fatalf("should not stack a second job, n=%d err=%v", n, err)
 	}
-	jobs, err := s.ListJobs(ctx, fx.recipe.ID, 10)
+	jobs, _, err := s.ListJobs(ctx, fx.recipe.ID, 10, 0)
 	if err != nil || len(jobs) != 1 || jobs[0].Trigger != "schedule" {
 		t.Fatalf("jobs %#v %v", jobs, err)
 	}

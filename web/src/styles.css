@@ -555,7 +555,8 @@ html.dark .tf {
 .right { text-align: right; }
 .end { display: flex; justify-content: flex-end; position: relative; }
 
-.cols-recipe { grid-template-columns: minmax(200px, 1.6fr) 128px 148px 168px 108px; }
+.cols-recipe { grid-template-columns: minmax(200px, 1.6fr) 168px 148px 168px 108px; }
+.cron-cell { cursor: help; }
 .cols-run { grid-template-columns: minmax(180px, 1.6fr) 90px 140px 90px 140px; }
 .cols-manifest { grid-template-columns: minmax(140px, 1fr) minmax(140px, 1fr) minmax(140px, 1fr) 170px; }
 .cols-pkg { grid-template-columns: minmax(140px, 1.2fr) minmax(160px, 1fr) 92px; }

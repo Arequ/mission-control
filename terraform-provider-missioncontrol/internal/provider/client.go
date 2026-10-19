@@ -46,6 +46,7 @@ func (c *Client) do(ctx context.Context, method, path string, in any, out any) e
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token)
+	req.Header.Set("X-Mission-Control-Client", "terraform")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -140,6 +141,7 @@ type scheduleAPI struct {
 	Name      string `json:"name"`
 	RecipeID  string `json:"recipe_id"`
 	Cron      string `json:"cron"`
+	Timezone  string `json:"timezone,omitempty"`
 	Enabled   bool   `json:"enabled"`
 	ManagedBy string `json:"managed_by,omitempty"`
 }

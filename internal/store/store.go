@@ -123,6 +123,24 @@ func checkRef(v string) error {
 	return nil
 }
 
+func checkRepoURL(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return invalid("url is required")
+	}
+	if strings.HasPrefix(v, "-") || strings.ContainsAny(v, " \t\r\n") {
+		return invalid("invalid repo url")
+	}
+	switch {
+	case strings.HasPrefix(v, "https://"), strings.HasPrefix(v, "http://"), strings.HasPrefix(v, "git://"), strings.HasPrefix(v, "ssh://"):
+		return nil
+	case strings.HasPrefix(v, "git@") && strings.Contains(v, ":"):
+		return nil
+	default:
+		return invalid("repo url must be https, ssh, or git@host:path")
+	}
+}
+
 func optUUID(v *string) any {
 	if v == nil {
 		return nil
@@ -132,17 +150,6 @@ func optUUID(v *string) any {
 		return nil
 	}
 	return s
-}
-
-func strPtr(v any) *string {
-	if v == nil {
-		return nil
-	}
-	s, ok := v.(string)
-	if !ok || s == "" {
-		return nil
-	}
-	return &s
 }
 
 func labelsOrEmpty(in []string) []string {
@@ -203,39 +210,82 @@ func trustString(raw json.RawMessage) (string, error) {
 	return string(raw), nil
 }
 
-func parseCron(expr string) error {
+func parseCron(expr, timezone string) error {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return invalid("cron is required")
 	}
-	if _, err := cron.ParseStandard(expr); err != nil {
+	loc, err := loadLocation(timezone)
+	if err != nil {
+		return err
+	}
+	sched, err := cron.ParseStandard(expr)
+	if err != nil {
 		return invalid("invalid cron: " + err.Error())
+	}
+	// A schedule that never matches (31 Feb) makes Next return the zero time.
+	// Treating that as due would enqueue on every tick.
+	if sched.Next(time.Date(2026, 1, 1, 0, 0, 0, 0, loc)).IsZero() {
+		return invalid("cron never fires")
 	}
 	return nil
 }
 
-func cronDue(expr string, last *time.Time, now time.Time) (bool, error) {
+func loadLocation(timezone string) (*time.Location, error) {
+	if strings.TrimSpace(timezone) == "" {
+		timezone = "UTC"
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return nil, invalid("invalid timezone " + timezone)
+	}
+	return loc, nil
+}
+
+// cronDue reports whether a schedule should enqueue one run at now.
+// Missed ticks collapse to a single due window. A civil time that repeats
+// on a DST fall-back fires once. A time that does not exist on a spring-forward is skipped.
+// A cron that never matches is not due.
+func cronDue(expr, timezone string, last *time.Time, now time.Time) (bool, error) {
 	if last == nil {
 		return false, nil
+	}
+	loc, err := loadLocation(timezone)
+	if err != nil {
+		return false, err
 	}
 	sched, err := cron.ParseStandard(strings.TrimSpace(expr))
 	if err != nil {
 		return false, err
 	}
-	next := sched.Next(last.UTC())
-	return !next.After(now.UTC()), nil
+	next := sched.Next(last.In(loc))
+	if next.IsZero() || next.After(now) {
+		return false, nil
+	}
+	// Fall back repeats a civil hour. The later absolute instant has an earlier wall clock
+	// than a fire that already happened in the first occurrence, so it is not a new slot.
+	if civilStamp(next.In(loc)) <= civilStamp(last.In(loc)) {
+		return false, nil
+	}
+	return true, nil
 }
 
-// ListAudit returns recent audit entries, newest first.
-func (s *Store) ListAudit(ctx context.Context, limit int) ([]model.AuditEntry, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
+func civilStamp(t time.Time) string {
+	return t.Format("2006-01-02 15:04:05.000000000")
+}
+
+// ListAudit returns recent audit entries, newest first, plus the total row count.
+func (s *Store) ListAudit(ctx context.Context, limit, offset int) ([]model.AuditEntry, int, error) {
+	limit, offset = pageWindow(limit, offset)
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log`).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, at, actor, actor_kind, action, resource_type, resource_id, detail
-		FROM audit_log ORDER BY id DESC LIMIT $1`, limit)
+		FROM audit_log ORDER BY id DESC LIMIT $1 OFFSET $2`, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	out := []model.AuditEntry{}
@@ -243,12 +293,25 @@ func (s *Store) ListAudit(ctx context.Context, limit int) ([]model.AuditEntry, e
 		var e model.AuditEntry
 		var detail []byte
 		if err := rows.Scan(&e.ID, &e.At, &e.Actor, &e.ActorKind, &e.Action, &e.ResourceType, &e.ResourceID, &detail); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		e.Detail = detail
 		out = append(out, e)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
+}
+
+func pageWindow(limit, offset int) (int, int) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
 }
 
 func notFound(err error) error {
@@ -259,12 +322,4 @@ func notFound(err error) error {
 		return ErrNotFound
 	}
 	return err
-}
-
-func commit(ctx context.Context, tx pgx.Tx, err error) error {
-	if err != nil {
-		_ = tx.Rollback(ctx)
-		return err
-	}
-	return tx.Commit(ctx)
 }

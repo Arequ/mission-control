@@ -44,13 +44,17 @@ func (r *recipeResource) Schema(_ context.Context, _ resource.SchemaRequest, res
 	resp.Schema = schema.Schema{
 		Description: "An AutoPkg recipe override: identifier, override contents, trust info, and whether it is enabled.",
 		Attributes: map[string]schema.Attribute{
-			"id":             schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"identifier":     schema.StringAttribute{Required: true, Description: "AutoPkg identifier, for example local.munki.Firefox."},
-			"name":           schema.StringAttribute{Required: true},
-			"repo_id":        schema.StringAttribute{Optional: true, Description: "missioncontrol_recipe_repo id."},
-			"enabled":        schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
-			"override":       schema.StringAttribute{Required: true, Description: "Recipe override plist or YAML."},
-			"trust_info":     schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("{}"), Description: "JSON trust info passed to autopkg verify-trust-info."},
+			"id":         schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"identifier": schema.StringAttribute{Required: true, Description: "AutoPkg identifier, for example local.munki.Firefox."},
+			"name":       schema.StringAttribute{Required: true},
+			"repo_id":    schema.StringAttribute{Optional: true, Description: "missioncontrol_recipe_repo id."},
+			"enabled":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
+			"override":   schema.StringAttribute{Required: true, Description: "Recipe override plist or YAML."},
+			"trust_info": schema.StringAttribute{
+				Optional: true, Computed: true, Default: stringdefault.StaticString("{}"),
+				PlanModifiers: []planmodifier.String{canonicalJSONModifier{}},
+				Description:   "JSON trust info passed to autopkg verify-trust-info. Key order is ignored.",
+			},
 			"runner_pool_id": schema.StringAttribute{Optional: true},
 			"labels": schema.ListAttribute{
 				ElementType: types.StringType, Optional: true, Computed: true,

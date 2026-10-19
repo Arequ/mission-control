@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"howett.net/plist"
@@ -55,15 +56,21 @@ func ApplyArtifact(info map[string]any, filename string, pkg []byte, catalog str
 	sum := sha256.Sum256(pkg)
 	info["installer_item_location"] = filename
 	info["installer_item_hash"] = hex.EncodeToString(sum[:])
-	size := int64(len(pkg)) / 1024
-	if len(pkg)%1024 != 0 {
-		size++
-	}
-	if size == 0 && len(pkg) > 0 {
-		size = 1
-	}
-	info["installer_item_size"] = size
+	// makepkginfo stores floor(bytes/1024). A file under 1 KiB is size 0.
+	info["installer_item_size"] = int64(len(pkg)) / 1024
 	info["catalogs"] = []any{catalog}
+}
+
+// MaxSoakDays is the largest soak that can be added to a timestamp without overflowing time.Duration.
+const MaxSoakDays = 3660
+
+// SoakDuration converts soak days into an exact multiple of 24 hours.
+// Values outside 0..MaxSoakDays are rejected so a huge soak cannot overflow into an immediate promotion.
+func SoakDuration(soakDays int) (time.Duration, bool) {
+	if soakDays < 0 || soakDays > MaxSoakDays {
+		return 0, false
+	}
+	return time.Duration(soakDays) * 24 * time.Hour, true
 }
 
 // MarshalPkginfo encodes pkginfo as JSON for storage.
@@ -81,7 +88,11 @@ func BuildCatalog(pkginfos [][]byte) ([]byte, error) {
 		if err := dec.Decode(&v); err != nil {
 			return nil, fmt.Errorf("catalog item: %w", err)
 		}
-		items = append(items, normalize(v))
+		norm := normalize(v)
+		if m, ok := norm.(map[string]any); ok {
+			stripCatalogMeta(m)
+		}
+		items = append(items, norm)
 	}
 	if len(items) == 0 {
 		return []byte(emptyCatalog), nil
@@ -120,11 +131,44 @@ func SoakDue(now, soakStarted time.Time, soakDays int, manualHold bool) bool {
 	if manualHold {
 		return false
 	}
-	if soakDays < 0 {
+	d, ok := SoakDuration(soakDays)
+	if !ok {
 		return false
 	}
-	deadline := soakStarted.UTC().Add(time.Duration(soakDays) * 24 * time.Hour)
+	deadline := soakStarted.UTC().Add(d)
 	return !now.UTC().Before(deadline)
+}
+
+// ForCatalog returns pkginfo JSON for one catalog membership.
+// notes and underscore keys are removed, matching makecatalogs, and catalogs is the catalog the row belongs to.
+func ForCatalog(raw []byte, catalog string) ([]byte, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return nil, fmt.Errorf("catalog item: %w", err)
+	}
+	m, ok := normalize(v).(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("catalog item is not a dictionary")
+	}
+	stripCatalogMeta(m)
+	if catalog != "" {
+		m["catalogs"] = []any{catalog}
+	}
+	if str(m["name"]) == "" || str(m["version"]) == "" {
+		return nil, fmt.Errorf("pkginfo missing name or version")
+	}
+	return json.Marshal(m)
+}
+
+func stripCatalogMeta(m map[string]any) {
+	delete(m, "notes")
+	for k := range m {
+		if strings.HasPrefix(k, "_") {
+			delete(m, k)
+		}
+	}
 }
 
 // ManifestPlist renders a Munki manifest.

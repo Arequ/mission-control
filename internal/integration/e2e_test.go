@@ -111,7 +111,7 @@ func TestRunnerImportsAndPromotes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	jobs, err := st.ListJobs(ctx, rec.ID, 10)
+	jobs, _, err := st.ListJobs(ctx, rec.ID, 10, 0)
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("jobs %#v %v", jobs, err)
 	}
@@ -208,7 +208,7 @@ func TestRunnerImportsAndPromotes(t *testing.T) {
 	if err := agent.RunJobs(runCtx, 1); err != nil {
 		t.Fatal(err)
 	}
-	jobs, err = st.ListJobs(ctx, rec.ID, 10)
+	jobs, _, err = st.ListJobs(ctx, rec.ID, 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

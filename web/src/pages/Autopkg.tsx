@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api, type Pipeline, type Recipe, type Schedule } from "../api";
+import { describeCron } from "../cron";
 import { AutopkgSeg, Empty, Managed, Mark, Page, StatusPill, Toolbar, enterStyle, match, useSearch, when } from "../ui";
 
 export function AutopkgPage() {
@@ -30,8 +31,11 @@ export function AutopkgPage() {
     return () => { stop = true; clearInterval(t); };
   }, []);
 
-  const cronFor = (id: string) => schedules.find((s) => s.recipe_id === id && s.enabled)?.cron;
-  const shown = recipes.filter((recipe) => match(q, recipe.name, recipe.identifier, cronFor(recipe.id)));
+  const scheduleFor = (id: string) => schedules.find((s) => s.recipe_id === id && s.enabled);
+  const shown = recipes.filter((recipe) => {
+    const schedule = scheduleFor(recipe.id);
+    return match(q, recipe.name, recipe.identifier, schedule?.cron, schedule ? describeCron(schedule.cron) : "");
+  });
 
   return (
     <Page>
@@ -80,7 +84,12 @@ export function AutopkgPage() {
                       <div className="subline mono">{recipe.identifier}</div>
                     </div>
                   </div>
-                  <div className="mono muted">{cronFor(recipe.id) ?? "—"}</div>
+                  <div
+                    className="cron-cell muted"
+                    title={scheduleFor(recipe.id) ? `${scheduleFor(recipe.id)!.cron}${scheduleFor(recipe.id)!.timezone && scheduleFor(recipe.id)!.timezone !== "UTC" ? ` ${scheduleFor(recipe.id)!.timezone}` : ""}` : undefined}
+                  >
+                    {scheduleFor(recipe.id) ? describeCron(scheduleFor(recipe.id)!.cron) : "—"}
+                  </div>
                   <div>
                     {recipe.last_job ? (
                       <Link to={`/runs/${recipe.last_job.id}`}>

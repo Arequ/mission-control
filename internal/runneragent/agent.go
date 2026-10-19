@@ -60,8 +60,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			return err
 		}
 		_ = a.heartbeat(ctx)
-		ran, err := a.poll(ctx, 20)
-		if err != nil {
+		if _, err := a.poll(ctx, 20); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
@@ -70,10 +69,6 @@ func (a *Agent) Run(ctx context.Context) error {
 				return ctx.Err()
 			case <-time.After(2 * time.Second):
 			}
-			continue
-		}
-		if !ran {
-			// poll already long-polled
 		}
 	}
 }
@@ -239,8 +234,8 @@ func (a *Agent) execute(ctx context.Context, lease model.Lease) error {
 			cache = filepath.Join(dir, "repos")
 		}
 		if err := syncRepos(runCtx, cache, lease.Repos); err != nil {
-			_ = a.logLine(runCtx, lease.JobID, "stderr", "repo sync: "+err.Error())
-			_, cerr := a.complete(runCtx, lease.JobID, "error", "repo sync: "+err.Error())
+			_ = a.logLine(runCtx, lease.JobID, lease.Attempt, "stderr", "repo sync: "+err.Error())
+			_, cerr := a.complete(runCtx, lease.JobID, lease.Attempt, "error", "repo sync: "+err.Error())
 			return errors.Join(err, cerr)
 		}
 	}
@@ -249,44 +244,44 @@ func (a *Agent) execute(ctx context.Context, lease model.Lease) error {
 	if bin == "" {
 		bin = "autopkg"
 	}
-	code, err := a.runCmd(runCtx, lease.JobID, bin, []string{"verify-trust-info", "--override", override, "--trust", trustPath})
+	code, err := a.runCmd(runCtx, lease.JobID, lease.Attempt, bin, []string{"verify-trust-info", "--override", override, "--trust", trustPath})
 	if err != nil || code != 0 {
 		msg := "verify-trust-info failed"
 		if err != nil {
 			msg = err.Error()
 		}
-		_, cerr := a.complete(runCtx, lease.JobID, "trust_failed", msg)
+		_, cerr := a.complete(runCtx, lease.JobID, lease.Attempt, "trust_failed", msg)
 		return cerr
 	}
-	code, err = a.runCmd(runCtx, lease.JobID, bin, []string{"run", "--override", override, "--output", out})
+	code, err = a.runCmd(runCtx, lease.JobID, lease.Attempt, bin, []string{"run", "--override", override, "--output", out})
 	if err != nil || code != 0 {
 		msg := "autopkg run failed"
 		if err != nil {
 			msg = err.Error()
 		}
-		_, cerr := a.complete(runCtx, lease.JobID, "error", msg)
+		_, cerr := a.complete(runCtx, lease.JobID, lease.Attempt, "error", msg)
 		return cerr
 	}
 	pkginfoPath := filepath.Join(out, "pkginfo.plist")
 	if _, statErr := os.Stat(pkginfoPath); statErr != nil {
-		_, cerr := a.complete(runCtx, lease.JobID, "no_change", "")
+		_, cerr := a.complete(runCtx, lease.JobID, lease.Attempt, "no_change", "")
 		return cerr
 	}
 	pkgPath, err := findPkg(out)
 	if err != nil {
-		_, cerr := a.complete(runCtx, lease.JobID, "error", err.Error())
+		_, cerr := a.complete(runCtx, lease.JobID, lease.Attempt, "error", err.Error())
 		return cerr
 	}
-	imported, err := a.upload(runCtx, lease.JobID, pkginfoPath, pkgPath)
+	imported, err := a.upload(runCtx, lease.JobID, lease.Attempt, pkginfoPath, pkgPath)
 	if err != nil {
-		_, cerr := a.complete(runCtx, lease.JobID, "error", err.Error())
+		_, cerr := a.complete(runCtx, lease.JobID, lease.Attempt, "error", err.Error())
 		return cerr
 	}
 	result := "new_version"
 	if !imported {
 		result = "no_change"
 	}
-	_, err = a.complete(runCtx, lease.JobID, result, "")
+	_, err = a.complete(runCtx, lease.JobID, lease.Attempt, result, "")
 	return err
 }
 
@@ -304,14 +299,14 @@ func (a *Agent) renew(ctx context.Context, lease model.Lease) func() {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				_ = a.do(ctx, http.MethodPost, "/api/v1/jobs/"+lease.JobID+"/renew", a.token, map[string]any{}, nil)
+				_ = a.do(ctx, http.MethodPost, "/api/v1/jobs/"+lease.JobID+"/renew", a.token, map[string]any{"attempt": lease.Attempt}, nil)
 			}
 		}
 	}()
 	return cancel
 }
 
-func (a *Agent) runCmd(ctx context.Context, jobID, bin string, args []string) (int, error) {
+func (a *Agent) runCmd(ctx context.Context, jobID string, attempt int, bin string, args []string) (int, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -330,7 +325,7 @@ func (a *Agent) runCmd(ctx context.Context, jobID, bin string, args []string) (i
 		sc := bufio.NewScanner(r)
 		sc.Buffer(make([]byte, 64*1024), 1024*1024)
 		for sc.Scan() {
-			_ = a.logLine(ctx, jobID, stream, sc.Text())
+			_ = a.logLine(ctx, jobID, attempt, stream, sc.Text())
 		}
 	}
 	wg.Add(2)
@@ -359,23 +354,27 @@ func findPkg(dir string) (string, error) {
 	return matches[0], nil
 }
 
-func (a *Agent) logLine(ctx context.Context, jobID, stream, line string) error {
+func (a *Agent) logLine(ctx context.Context, jobID string, attempt int, stream, line string) error {
 	return a.do(ctx, http.MethodPost, "/api/v1/jobs/"+jobID+"/logs", a.token, map[string]any{
-		"lines": []map[string]string{{"stream": stream, "line": line}},
+		"attempt": attempt,
+		"lines":   []map[string]string{{"stream": stream, "line": line}},
 	}, nil)
 }
 
-func (a *Agent) complete(ctx context.Context, jobID, result, errMsg string) (model.Job, error) {
+func (a *Agent) complete(ctx context.Context, jobID string, attempt int, result, errMsg string) (model.Job, error) {
 	var job model.Job
 	err := a.do(ctx, http.MethodPost, "/api/v1/jobs/"+jobID+"/complete", a.token, map[string]any{
-		"result": result, "error": errMsg,
+		"attempt": attempt, "result": result, "error": errMsg,
 	}, &job)
 	return job, err
 }
 
-func (a *Agent) upload(ctx context.Context, jobID, pkginfoPath, pkgPath string) (bool, error) {
+func (a *Agent) upload(ctx context.Context, jobID string, attempt int, pkginfoPath, pkgPath string) (bool, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
+	if err := w.WriteField("attempt", fmt.Sprintf("%d", attempt)); err != nil {
+		return false, err
+	}
 	if err := addFile(w, "pkginfo", pkginfoPath); err != nil {
 		return false, err
 	}

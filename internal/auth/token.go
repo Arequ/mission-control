@@ -23,6 +23,14 @@ func EqualHash(a, b string) bool {
 	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
+// SecretEqual compares two secrets without leaking their contents through a short-circuit.
+// Digests are fixed length, so a mismatch in the raw strings does not return early.
+func SecretEqual(a, b string) bool {
+	da := sha256.Sum256([]byte(a))
+	db := sha256.Sum256([]byte(b))
+	return subtle.ConstantTimeCompare(da[:], db[:]) == 1
+}
+
 // Bearer extracts the token from an Authorization header.
 func Bearer(header string) string {
 	header = strings.TrimSpace(header)

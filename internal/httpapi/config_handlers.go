@@ -3,17 +3,29 @@ package httpapi
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/Arequ/mission-control/internal/model"
 )
 
 func (s *Server) listAudit(w http.ResponseWriter, r *http.Request) {
-	items, err := s.store.ListAudit(r.Context(), 100)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	items, total, err := s.store.ListAudit(r.Context(), limit, offset)
 	if err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"audit": items})
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"audit": items, "limit": limit, "offset": offset, "total": total})
 }
 
 func (s *Server) createToken(w http.ResponseWriter, r *http.Request) {
@@ -65,6 +77,7 @@ func (s *Server) createRepo(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.CreateRecipeRepo(r.Context(), principal(r), in)
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -88,6 +101,7 @@ func (s *Server) updateRepo(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.UpdateRecipeRepo(r.Context(), principal(r), r.PathValue("id"), in)
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -120,7 +134,7 @@ func (in recipeIn) model() model.Recipe {
 	return model.Recipe{
 		Identifier: in.Identifier, Name: in.Name, RepoID: in.RepoID, Enabled: flag(in.Enabled, true),
 		Override: in.Override, TrustInfo: in.TrustInfo, RunnerPoolID: in.RunnerPoolID,
-		Labels: in.Labels, ManagedBy: in.ManagedBy,
+		Labels: in.Labels, ManagedBy: "terraform",
 	}
 }
 
@@ -182,12 +196,17 @@ type scheduleIn struct {
 	Name      string `json:"name"`
 	RecipeID  string `json:"recipe_id"`
 	Cron      string `json:"cron"`
+	Timezone  string `json:"timezone"`
 	Enabled   *bool  `json:"enabled"`
 	ManagedBy string `json:"managed_by"`
 }
 
 func (in scheduleIn) model() model.Schedule {
-	return model.Schedule{Name: in.Name, RecipeID: in.RecipeID, Cron: in.Cron, Enabled: flag(in.Enabled, true), ManagedBy: in.ManagedBy}
+	tz := in.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
+	return model.Schedule{Name: in.Name, RecipeID: in.RecipeID, Cron: in.Cron, Timezone: tz, Enabled: flag(in.Enabled, true), ManagedBy: "terraform"}
 }
 
 func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
@@ -259,6 +278,7 @@ func (s *Server) updateSettings(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.UpdatePipelineSettings(r.Context(), principal(r), in)
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -289,7 +309,7 @@ type ruleIn struct {
 func (in ruleIn) model() model.PromotionRule {
 	return model.PromotionRule{
 		Name: in.Name, FromCatalog: in.FromCatalog, ToCatalog: in.ToCatalog, SoakDays: in.SoakDays,
-		ManualHold: in.ManualHold, Enabled: flag(in.Enabled, true), ManagedBy: in.ManagedBy,
+		ManualHold: in.ManualHold, Enabled: flag(in.Enabled, true), ManagedBy: "terraform",
 	}
 }
 
@@ -362,6 +382,7 @@ func (s *Server) createPool(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.CreateRunnerPool(r.Context(), principal(r), in)
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -385,6 +406,7 @@ func (s *Server) updatePool(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.UpdateRunnerPool(r.Context(), principal(r), r.PathValue("id"), in)
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -416,6 +438,7 @@ func (s *Server) createManifest(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.CreateManifest(r.Context(), principal(r), in)
 	if err != nil {
 		s.writeStoreErr(w, err)
@@ -439,6 +462,7 @@ func (s *Server) updateManifest(w http.ResponseWriter, r *http.Request) {
 		badJSON(w, err)
 		return
 	}
+	in.ManagedBy = "terraform"
 	out, err := s.store.UpdateManifest(r.Context(), principal(r), r.PathValue("id"), in)
 	if err != nil {
 		s.writeStoreErr(w, err)

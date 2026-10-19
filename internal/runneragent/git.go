@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/Arequ/mission-control/internal/model"
 )
@@ -24,8 +25,14 @@ func syncRepos(ctx context.Context, cache string, repos []model.RecipeRepo) erro
 			name = "repo"
 		}
 		dest := filepath.Join(cache, name)
+		if strings.HasPrefix(strings.TrimSpace(repo.URL), "-") || strings.ContainsAny(repo.URL, " \t\r\n") {
+			return fmt.Errorf("refusing repo url %q", repo.URL)
+		}
+		if repo.Ref == "" || strings.HasPrefix(repo.Ref, "-") || strings.ContainsAny(repo.Ref, " \t\r\n") {
+			return fmt.Errorf("refusing repo ref %q", repo.Ref)
+		}
 		if _, err := os.Stat(filepath.Join(dest, ".git")); err != nil {
-			cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", repo.Ref, repo.URL, dest)
+			cmd := exec.CommandContext(ctx, "git", "clone", "--depth", "1", "--branch", repo.Ref, "--", repo.URL, dest)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("clone %s: %w (%s)", repo.Name, err, out)

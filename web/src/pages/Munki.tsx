@@ -45,7 +45,7 @@ export function MunkiPage() {
     return () => { stop = true; clearInterval(t); };
   }, []);
   const rule = rules.find((item) => item.enabled) ?? rules[0];
-  const ordered = [...catalogs].sort((a, b) => (a.name === "testing" ? -1 : b.name === "testing" ? 1 : a.name.localeCompare(b.name)));
+  const ordered = catalogs.filter((catalog) => catalog.name !== "all").sort((a, b) => (a.name === "testing" ? -1 : b.name === "testing" ? 1 : a.name.localeCompare(b.name)));
   return (
     <Page>
       <Toolbar

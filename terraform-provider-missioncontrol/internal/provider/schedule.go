@@ -29,6 +29,7 @@ type scheduleModel struct {
 	Name      types.String `tfsdk:"name"`
 	RecipeID  types.String `tfsdk:"recipe_id"`
 	Cron      types.String `tfsdk:"cron"`
+	Timezone  types.String `tfsdk:"timezone"`
 	Enabled   types.Bool   `tfsdk:"enabled"`
 	ManagedBy types.String `tfsdk:"managed_by"`
 }
@@ -41,6 +42,7 @@ func (r *scheduleResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"name":       schema.StringAttribute{Required: true},
 			"recipe_id":  schema.StringAttribute{Required: true},
 			"cron":       schema.StringAttribute{Required: true, Description: "minute hour day-of-month month day-of-week"},
+			"timezone":   schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("UTC"), Description: "IANA timezone the cron expression is evaluated in."},
 			"enabled":    schema.BoolAttribute{Optional: true, Computed: true, Default: booldefault.StaticBool(true)},
 			"managed_by": schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
 		},
@@ -48,12 +50,16 @@ func (r *scheduleResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 }
 
 func (m scheduleModel) api() scheduleAPI {
-	return scheduleAPI{Name: m.Name.ValueString(), RecipeID: m.RecipeID.ValueString(), Cron: m.Cron.ValueString(), Enabled: m.Enabled.ValueBool(), ManagedBy: m.ManagedBy.ValueString()}
+	return scheduleAPI{Name: m.Name.ValueString(), RecipeID: m.RecipeID.ValueString(), Cron: m.Cron.ValueString(), Timezone: m.Timezone.ValueString(), Enabled: m.Enabled.ValueBool(), ManagedBy: m.ManagedBy.ValueString()}
 }
 func modelSchedule(in scheduleAPI) scheduleModel {
+	tz := in.Timezone
+	if tz == "" {
+		tz = "UTC"
+	}
 	return scheduleModel{
 		ID: types.StringValue(in.ID), Name: types.StringValue(in.Name), RecipeID: types.StringValue(in.RecipeID),
-		Cron: types.StringValue(in.Cron), Enabled: types.BoolValue(in.Enabled), ManagedBy: types.StringValue(in.ManagedBy),
+		Cron: types.StringValue(in.Cron), Timezone: types.StringValue(tz), Enabled: types.BoolValue(in.Enabled), ManagedBy: types.StringValue(in.ManagedBy),
 	}
 }
 

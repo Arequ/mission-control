@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Arequ/mission-control/internal/model"
+	"github.com/Arequ/mission-control/internal/munki"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -20,8 +21,8 @@ func (s *Store) CreateRecipeRepo(ctx context.Context, p model.Principal, in mode
 	if err := checkName("name", in.Name); err != nil {
 		return model.RecipeRepo{}, err
 	}
-	if in.URL == "" {
-		return model.RecipeRepo{}, invalid("url is required")
+	if err := checkRepoURL(in.URL); err != nil {
+		return model.RecipeRepo{}, err
 	}
 	if in.Ref == "" {
 		in.Ref = "main"
@@ -91,8 +92,8 @@ func (s *Store) UpdateRecipeRepo(ctx context.Context, p model.Principal, id stri
 	if err := checkName("name", in.Name); err != nil {
 		return model.RecipeRepo{}, err
 	}
-	if in.URL == "" {
-		return model.RecipeRepo{}, invalid("url is required")
+	if err := checkRepoURL(in.URL); err != nil {
+		return model.RecipeRepo{}, err
 	}
 	if in.Ref == "" {
 		in.Ref = "main"
@@ -359,12 +360,12 @@ func (s *Store) DeleteRecipe(ctx context.Context, p model.Principal, id string) 
 
 func scanSchedule(row pgx.Row) (model.Schedule, error) {
 	var sc model.Schedule
-	err := row.Scan(&sc.ID, &sc.Name, &sc.RecipeID, &sc.RecipeIdentifier, &sc.Cron, &sc.Enabled,
+	err := row.Scan(&sc.ID, &sc.Name, &sc.RecipeID, &sc.RecipeIdentifier, &sc.Cron, &sc.Timezone, &sc.Enabled,
 		&sc.ManagedBy, &sc.LastEnqueuedAt, &sc.CreatedAt, &sc.UpdatedAt)
 	return sc, err
 }
 
-const scheduleCols = `s.id, s.name, s.recipe_id, r.identifier, s.cron, s.enabled, s.managed_by, s.last_enqueued_at, s.created_at, s.updated_at`
+const scheduleCols = `s.id, s.name, s.recipe_id, r.identifier, s.cron, s.timezone, s.enabled, s.managed_by, s.last_enqueued_at, s.created_at, s.updated_at`
 
 // CreateSchedule inserts a cron schedule. last_enqueued_at starts at now so the
 // first fire is the next cron instant, not an immediate backfill.
@@ -372,7 +373,10 @@ func (s *Store) CreateSchedule(ctx context.Context, p model.Principal, in model.
 	if err := checkName("name", in.Name); err != nil {
 		return model.Schedule{}, err
 	}
-	if err := parseCron(in.Cron); err != nil {
+	if in.Timezone == "" {
+		in.Timezone = "UTC"
+	}
+	if err := parseCron(in.Cron, in.Timezone); err != nil {
 		return model.Schedule{}, err
 	}
 	if in.RecipeID == "" {
@@ -392,9 +396,9 @@ func (s *Store) CreateSchedule(ctx context.Context, p model.Principal, in model.
 		return model.Schedule{}, err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO schedules (id, name, recipe_id, cron, enabled, managed_by, last_enqueued_at, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)`,
-		in.ID, in.Name, in.RecipeID, in.Cron, in.Enabled, in.ManagedBy, now, now)
+		INSERT INTO schedules (id, name, recipe_id, cron, timezone, enabled, managed_by, last_enqueued_at, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)`,
+		in.ID, in.Name, in.RecipeID, in.Cron, in.Timezone, in.Enabled, in.ManagedBy, now, now)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return model.Schedule{}, mapWriteErr(err)
@@ -454,7 +458,10 @@ func (s *Store) UpdateSchedule(ctx context.Context, p model.Principal, id string
 	if err := checkName("name", in.Name); err != nil {
 		return model.Schedule{}, err
 	}
-	if err := parseCron(in.Cron); err != nil {
+	if in.Timezone == "" {
+		in.Timezone = "UTC"
+	}
+	if err := parseCron(in.Cron, in.Timezone); err != nil {
 		return model.Schedule{}, err
 	}
 	if _, err := s.GetRecipe(ctx, in.RecipeID); err != nil {
@@ -468,8 +475,8 @@ func (s *Store) UpdateSchedule(ctx context.Context, p model.Principal, id string
 		return model.Schedule{}, err
 	}
 	tag, err := tx.Exec(ctx, `
-		UPDATE schedules SET name=$2, recipe_id=$3, cron=$4, enabled=$5, managed_by=$6, updated_at=$7 WHERE id=$1`,
-		id, in.Name, in.RecipeID, in.Cron, in.Enabled, in.ManagedBy, now)
+		UPDATE schedules SET name=$2, recipe_id=$3, cron=$4, timezone=$5, enabled=$6, managed_by=$7, updated_at=$8 WHERE id=$1`,
+		id, in.Name, in.RecipeID, in.Cron, in.Timezone, in.Enabled, in.ManagedBy, now)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		return model.Schedule{}, mapWriteErr(err)
@@ -606,8 +613,8 @@ func validateRule(in model.PromotionRule) (model.PromotionRule, error) {
 	if in.FromCatalog == in.ToCatalog {
 		return model.PromotionRule{}, invalid("from_catalog and to_catalog must differ")
 	}
-	if in.SoakDays < 0 {
-		return model.PromotionRule{}, invalid("soak_days must be >= 0")
+	if in.SoakDays < 0 || in.SoakDays > munki.MaxSoakDays {
+		return model.PromotionRule{}, invalid("soak_days must be between 0 and 3660")
 	}
 	in.ManagedBy = managedBy(in.ManagedBy)
 	return in, nil

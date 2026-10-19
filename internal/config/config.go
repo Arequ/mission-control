@@ -27,6 +27,7 @@ type Config struct {
 	WebDir            string
 	ClockOffset       time.Duration
 	DevCORS           bool
+	DevSeed           bool
 	SchedulerInterval time.Duration
 	LogLevel          string
 	OfflineAfter      time.Duration
@@ -51,10 +52,18 @@ func Load() (Config, error) {
 		S3UseSSL:          getenvBool("MC_S3_USE_SSL", false),
 		WebDir:            getenv("MC_WEB_DIR", "web/dist"),
 		DevCORS:           getenvBool("MC_DEV_CORS", false),
+		DevSeed:           getenvBool("MC_DEV_SEED", false),
 		SchedulerInterval: 5 * time.Second,
 		LogLevel:          getenv("MC_LOG_LEVEL", "info"),
 		OfflineAfter:      45 * time.Second,
 		MaxUploadBytes:    512 << 20,
+	}
+	if v := os.Getenv("MC_OFFLINE_AFTER"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			return Config{}, fmt.Errorf("MC_OFFLINE_AFTER: %w", err)
+		}
+		cfg.OfflineAfter = d
 	}
 	if v := os.Getenv("MC_CLOCK_OFFSET"); v != "" {
 		d, err := time.ParseDuration(v)

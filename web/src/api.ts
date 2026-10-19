@@ -25,6 +25,7 @@ export type Schedule = {
   recipe_id: string;
   recipe_identifier?: string;
   cron: string;
+  timezone?: string;
   enabled: boolean;
   managed_by: string;
 };

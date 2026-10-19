@@ -28,6 +28,8 @@ server: build ui
 	MC_ADMIN_TOKEN=$${MC_ADMIN_TOKEN:-mc_dev_admin_token} \
 	MC_BOOTSTRAP_TOKEN=$${MC_BOOTSTRAP_TOKEN:-mc_dev_bootstrap_token} \
 	MC_REPO_TOKEN=$${MC_REPO_TOKEN:-mc_dev_repo_token} \
+	MC_DEV_SEED=$${MC_DEV_SEED:-1} \
+	MC_OFFLINE_AFTER=$${MC_OFFLINE_AFTER:-24h} \
 	./$(BIN)/server
 
 tf-dev: build

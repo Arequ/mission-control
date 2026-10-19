@@ -4,12 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/munki"
 	"github.com/jackc/pgx/v5"
 )
+
+var filenameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,180}$`)
 
 func scanPackage(row pgx.Row) (model.Package, error) {
 	var p model.Package
@@ -35,10 +41,54 @@ func (s *Store) ImportCatalog(ctx context.Context) (string, error) {
 	return name, nil
 }
 
-// InsertPackage records a new pkginfo. A duplicate name+version is not imported again.
+func validateFilename(name string) error {
+	if name == "" || strings.ContainsAny(name, "/\\\x00") || strings.Contains(name, "..") || !filenameRE.MatchString(name) {
+		return invalid("invalid package filename")
+	}
+	return nil
+}
+
+func hashesDiffer(existing, incoming []byte) bool {
+	oldHash, newHash := installerHash(existing), installerHash(incoming)
+	return oldHash != "" && newHash != "" && oldHash != newHash
+}
+
+func installerHash(raw []byte) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	s, _ := m["installer_item_hash"].(string)
+	return strings.ToLower(s)
+}
+
+type leaseOwner struct {
+	runnerID string
+	jobID    string
+	attempt  int
+}
+
+// InsertPackage records a new pkginfo. A duplicate name+version with the same bytes is not imported again.
+// A duplicate name+version with different bytes is a conflict and does not replace the stored object.
 func (s *Store) InsertPackage(ctx context.Context, p model.Principal, pkg model.Package) (model.Package, bool, error) {
+	return s.insertPackage(ctx, p, pkg, nil)
+}
+
+// InsertOwnedPackage is InsertPackage that also checks the runner still holds the job attempt.
+// The check and the insert share a transaction so a reclaimed lease cannot import.
+func (s *Store) InsertOwnedPackage(ctx context.Context, p model.Principal, runnerID, jobID string, attempt int, pkg model.Package) (model.Package, bool, error) {
+	return s.insertPackage(ctx, p, pkg, &leaseOwner{runnerID: runnerID, jobID: jobID, attempt: attempt})
+}
+
+func (s *Store) insertPackage(ctx context.Context, p model.Principal, pkg model.Package, owner *leaseOwner) (model.Package, bool, error) {
 	if pkg.Name == "" || pkg.Version == "" {
 		return model.Package{}, false, invalid("package name and version are required")
+	}
+	if err := validateFilename(pkg.Filename); err != nil {
+		return model.Package{}, false, err
 	}
 	if pkg.Catalog == "" {
 		cat, err := s.ImportCatalog(ctx)
@@ -47,11 +97,42 @@ func (s *Store) InsertPackage(ctx context.Context, p model.Principal, pkg model.
 		}
 		pkg.Catalog = cat
 	}
-	var existing string
-	err := s.pool.QueryRow(ctx, `SELECT id FROM packages WHERE name=$1 AND version=$2`, pkg.Name, pkg.Version).Scan(&existing)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Package{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	if owner != nil {
+		var status string
+		var attempt int
+		err = tx.QueryRow(ctx, `
+			SELECT status, attempt FROM jobs WHERE id=$1 AND runner_id=$2 AND attempt=$3 FOR UPDATE`,
+			owner.jobID, owner.runnerID, owner.attempt).Scan(&status, &attempt)
+		if err != nil {
+			if notFound(err) == ErrNotFound {
+				return model.Package{}, false, ErrForbidden
+			}
+			return model.Package{}, false, err
+		}
+		if status != "leased" && status != "running" {
+			return model.Package{}, false, ErrForbidden
+		}
+	}
+	var existingID string
+	var existingInfo []byte
+	err = tx.QueryRow(ctx, `SELECT id, pkginfo FROM packages WHERE name=$1 AND version=$2 FOR UPDATE`, pkg.Name, pkg.Version).Scan(&existingID, &existingInfo)
 	if err == nil {
-		got, gerr := s.GetPackage(ctx, existing)
-		return got, false, gerr
+		if err := tx.Commit(ctx); err != nil {
+			return model.Package{}, false, err
+		}
+		got, gerr := s.GetPackage(ctx, existingID)
+		if gerr != nil {
+			return model.Package{}, false, gerr
+		}
+		if hashesDiffer(existingInfo, pkg.Pkginfo) {
+			return got, false, fmt.Errorf("%w: package bytes differ", ErrConflict)
+		}
+		return got, false, nil
 	}
 	if notFound(err) != ErrNotFound {
 		return model.Package{}, false, err
@@ -60,28 +141,30 @@ func (s *Store) InsertPackage(ctx context.Context, p model.Principal, pkg model.
 	pkg.ID = newID()
 	pkg.SoakStartedAt = now
 	pkg.CreatedAt = now
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return model.Package{}, false, err
-	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO packages (id, name, version, catalog, pkginfo, pkg_key, filename, job_id, recipe_identifier, soak_started_at, created_at)
 		VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$10)`,
 		pkg.ID, pkg.Name, pkg.Version, pkg.Catalog, string(pkg.Pkginfo), "pkgs/"+pkg.Filename, pkg.Filename, optUUID(pkg.JobID), pkg.RecipeIdentifier, now)
 	if err != nil {
-		_ = tx.Rollback(ctx)
 		mapped := mapWriteErr(err)
 		if errors.Is(mapped, ErrConflict) {
+			_ = tx.Rollback(ctx)
 			var existing string
-			if qerr := s.pool.QueryRow(ctx, `SELECT id FROM packages WHERE name=$1 AND version=$2`, pkg.Name, pkg.Version).Scan(&existing); qerr == nil {
+			var info []byte
+			if qerr := s.pool.QueryRow(ctx, `SELECT id, pkginfo FROM packages WHERE name=$1 AND version=$2`, pkg.Name, pkg.Version).Scan(&existing, &info); qerr == nil {
 				got, gerr := s.GetPackage(ctx, existing)
-				return got, false, gerr
+				if gerr != nil {
+					return model.Package{}, false, gerr
+				}
+				if hashesDiffer(info, pkg.Pkginfo) {
+					return got, false, fmt.Errorf("%w: package bytes differ", ErrConflict)
+				}
+				return got, false, nil
 			}
 		}
 		return model.Package{}, false, mapped
 	}
 	if err := s.audit(ctx, tx, p, "import", "package", pkg.ID, map[string]any{"name": pkg.Name, "version": pkg.Version, "catalog": pkg.Catalog}); err != nil {
-		_ = tx.Rollback(ctx)
 		return model.Package{}, false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -92,6 +175,18 @@ func (s *Store) InsertPackage(ctx context.Context, p model.Principal, pkg model.
 	}
 	got, err := s.GetPackage(ctx, pkg.ID)
 	return got, true, err
+}
+
+// DeletePackage removes a package row and rebuilds catalogs. Used when blob storage fails after insert.
+func (s *Store) DeletePackage(ctx context.Context, id string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM packages WHERE id=$1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return s.RegenerateCatalogs(ctx)
 }
 
 // GetPackage loads one package and computes soak status.
@@ -144,17 +239,27 @@ func (s *Store) ListPackages(ctx context.Context, catalog string) ([]model.Packa
 	return out, nil
 }
 
-func annotateSoak(p *model.Package, rules []model.PromotionRule, now time.Time) {
-	var match *model.PromotionRule
+func matchingRule(rules []model.PromotionRule, catalog string) *model.PromotionRule {
+	var best *model.PromotionRule
 	for i := range rules {
-		if rules[i].Enabled && rules[i].FromCatalog == p.Catalog {
-			match = &rules[i]
-			break
+		r := &rules[i]
+		if !r.Enabled || r.FromCatalog != catalog {
+			continue
+		}
+		if best == nil || r.CreatedAt.Before(best.CreatedAt) {
+			best = r
 		}
 	}
+	return best
+}
+
+func annotateSoak(p *model.Package, rules []model.PromotionRule, now time.Time) {
+	match := matchingRule(rules, p.Catalog)
 	if match != nil {
-		ends := p.SoakStartedAt.Add(time.Duration(match.SoakDays) * 24 * time.Hour)
-		p.SoakEndsAt = &ends
+		if d, ok := munki.SoakDuration(match.SoakDays); ok {
+			ends := p.SoakStartedAt.Add(d)
+			p.SoakEndsAt = &ends
+		}
 		switch {
 		case match.ManualHold:
 			p.SoakStatus = "held"
@@ -178,39 +283,43 @@ func (s *Store) PromoteDue(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	sort.SliceStable(rules, func(i, j int) bool { return rules[i].CreatedAt.Before(rules[j].CreatedAt) })
 	now := s.now()
 	n := 0
 	for _, rule := range rules {
 		if !rule.Enabled || rule.ManualHold {
 			continue
 		}
-		deadline := now.Add(-time.Duration(rule.SoakDays) * 24 * time.Hour)
-		rows, err := s.pool.Query(ctx, `SELECT id, pkginfo FROM packages WHERE catalog=$1 AND soak_started_at <= $2`, rule.FromCatalog, deadline)
+		d, ok := munki.SoakDuration(rule.SoakDays)
+		if !ok {
+			continue
+		}
+		deadline := now.Add(-d)
+		rows, err := s.pool.Query(ctx, `SELECT id FROM packages WHERE catalog=$1 AND soak_started_at <= $2`, rule.FromCatalog, deadline)
 		if err != nil {
 			return n, err
 		}
-		type item struct {
-			id   string
-			info []byte
-		}
-		var items []item
+		var ids []string
 		for rows.Next() {
-			var it item
-			if err := rows.Scan(&it.id, &it.info); err != nil {
+			var id string
+			if err := rows.Scan(&id); err != nil {
 				rows.Close()
 				return n, err
 			}
-			items = append(items, it)
+			ids = append(ids, id)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return n, err
 		}
-		for _, it := range items {
-			if err := s.movePackage(ctx, model.System, it.id, it.info, rule.ToCatalog, "promote"); err != nil {
+		for _, id := range ids {
+			moved, err := s.movePackage(ctx, model.System, id, rule.FromCatalog, rule.ToCatalog, "promote")
+			if err != nil {
 				return n, err
 			}
-			n++
+			if moved {
+				n++
+			}
 		}
 	}
 	if n > 0 {
@@ -231,17 +340,16 @@ func (s *Store) PromotePackage(ctx context.Context, p model.Principal, id string
 	if err != nil {
 		return model.Package{}, err
 	}
-	var dest string
-	for _, rule := range rules {
-		if rule.Enabled && rule.FromCatalog == pkg.Catalog {
-			dest = rule.ToCatalog
-			break
+	match := matchingRule(rules, pkg.Catalog)
+	if match == nil {
+		for _, rule := range rules {
+			if rule.ToCatalog == pkg.Catalog {
+				return pkg, nil
+			}
 		}
-	}
-	if dest == "" {
 		return model.Package{}, invalid("no promotion rule matches catalog " + pkg.Catalog)
 	}
-	if err := s.movePackage(ctx, p, id, pkg.Pkginfo, dest, "promote_manual"); err != nil {
+	if _, err := s.movePackage(ctx, p, id, pkg.Catalog, match.ToCatalog, "promote_manual"); err != nil {
 		return model.Package{}, err
 	}
 	if err := s.RegenerateCatalogs(ctx); err != nil {
@@ -250,7 +358,24 @@ func (s *Store) PromotePackage(ctx context.Context, p model.Principal, id string
 	return s.GetPackage(ctx, id)
 }
 
-func (s *Store) movePackage(ctx context.Context, p model.Principal, id string, info []byte, dest, action string) error {
+func (s *Store) movePackage(ctx context.Context, p model.Principal, id, from, dest, action string) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var cur string
+	var info []byte
+	err = tx.QueryRow(ctx, `SELECT catalog, pkginfo FROM packages WHERE id=$1 FOR UPDATE`, id).Scan(&cur, &info)
+	if err != nil {
+		if notFound(err) == ErrNotFound {
+			return false, ErrNotFound
+		}
+		return false, err
+	}
+	if cur != from {
+		return false, tx.Commit(ctx)
+	}
 	var m map[string]any
 	if len(info) > 0 {
 		_ = json.Unmarshal(info, &m)
@@ -261,50 +386,32 @@ func (s *Store) movePackage(ctx context.Context, p model.Principal, id string, i
 	m["catalogs"] = []any{dest}
 	raw, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return false, err
 	}
 	now := s.now()
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
 	tag, err := tx.Exec(ctx, `
-		UPDATE packages SET catalog=$2, pkginfo=$3::jsonb, soak_started_at=$4, promoted_at=$4 WHERE id=$1`,
-		id, dest, string(raw), now)
+		UPDATE packages SET catalog=$2, pkginfo=$3::jsonb, soak_started_at=$4, promoted_at=$4 WHERE id=$1 AND catalog=$5`,
+		id, dest, string(raw), now, from)
 	if err != nil {
-		_ = tx.Rollback(ctx)
-		return err
+		return false, err
 	}
 	if tag.RowsAffected() == 0 {
-		_ = tx.Rollback(ctx)
-		return ErrNotFound
+		return false, tx.Commit(ctx)
 	}
 	if err := s.audit(ctx, tx, p, action, "package", id, map[string]any{"catalog": dest}); err != nil {
-		_ = tx.Rollback(ctx)
-		return err
+		return false, err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RegenerateCatalogs rewrites every known catalog plist from current pkginfo.
+// testing, production, and all always exist. all contains every item, which is what makecatalogs writes
+// and what munkiimport reads. An item is also listed in the catalog named by its row.
 func (s *Store) RegenerateCatalogs(ctx context.Context) error {
-	names := map[string]bool{"testing": true, "production": true}
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT catalog FROM packages`)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var n string
-		if err := rows.Scan(&n); err != nil {
-			rows.Close()
-			return err
-		}
-		names[n] = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
+	names := map[string][][]byte{"testing": nil, "production": nil, "all": nil}
 	rrows, err := s.pool.Query(ctx, `SELECT from_catalog, to_catalog FROM promotion_rules`)
 	if err != nil {
 		return err
@@ -315,29 +422,44 @@ func (s *Store) RegenerateCatalogs(ctx context.Context) error {
 			rrows.Close()
 			return err
 		}
-		names[a] = true
-		names[b] = true
+		if _, ok := names[a]; !ok {
+			names[a] = nil
+		}
+		if _, ok := names[b]; !ok {
+			names[b] = nil
+		}
 	}
 	rrows.Close()
-	now := s.now()
-	for name := range names {
-		prows, err := s.pool.Query(ctx, `SELECT pkginfo FROM packages WHERE catalog=$1 ORDER BY name, version`, name)
+	if err := rrows.Err(); err != nil {
+		return err
+	}
+	prows, err := s.pool.Query(ctx, `SELECT catalog, pkginfo FROM packages ORDER BY name, version`)
+	if err != nil {
+		return err
+	}
+	for prows.Next() {
+		var catalog string
+		var raw []byte
+		if err := prows.Scan(&catalog, &raw); err != nil {
+			prows.Close()
+			return err
+		}
+		item, err := munki.ForCatalog(raw, catalog)
 		if err != nil {
+			prows.Close()
 			return err
 		}
-		var items [][]byte
-		for prows.Next() {
-			var b []byte
-			if err := prows.Scan(&b); err != nil {
-				prows.Close()
-				return err
-			}
-			items = append(items, b)
+		names[catalog] = append(names[catalog], item)
+		if catalog != "all" {
+			names["all"] = append(names["all"], item)
 		}
-		prows.Close()
-		if err := prows.Err(); err != nil {
-			return err
-		}
+	}
+	prows.Close()
+	if err := prows.Err(); err != nil {
+		return err
+	}
+	now := s.now()
+	for name, items := range names {
 		body, err := munki.BuildCatalog(items)
 		if err != nil {
 			return err

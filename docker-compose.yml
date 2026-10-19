@@ -27,6 +27,8 @@ services:
       MC_STORAGE_DRIVER: local
       MC_STORAGE_DIR: /data
       MC_WEB_DIR: /app/web/dist
+      MC_DEV_SEED: "1"
+      MC_OFFLINE_AFTER: 24h
     ports:
       - "8080:8080"
     volumes:

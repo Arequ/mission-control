@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -47,14 +48,25 @@ type Local struct {
 	Dir string
 }
 
+// ValidateKey rejects empty keys, traversal, and keys that change when cleaned.
+func ValidateKey(key string) error {
+	if key == "" || strings.ContainsAny(key, "\\\x00") {
+		return fmt.Errorf("invalid storage key")
+	}
+	cleaned := strings.TrimPrefix(path.Clean("/"+key), "/")
+	if cleaned == "" || cleaned == "." || cleaned != key || strings.Contains(cleaned, "..") {
+		return fmt.Errorf("invalid storage key")
+	}
+	return nil
+}
+
 func (l *Local) path(key string) (string, error) {
-	key = strings.TrimPrefix(filepath.Clean("/"+key), "/")
-	if key == "" || key == "." || strings.HasPrefix(key, "..") || strings.Contains(key, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("invalid storage key")
+	if err := ValidateKey(key); err != nil {
+		return "", err
 	}
 	full := filepath.Join(l.Dir, filepath.FromSlash(key))
 	rel, err := filepath.Rel(l.Dir, full)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", fmt.Errorf("invalid storage key")
 	}
 	return full, nil
@@ -119,18 +131,39 @@ type S3 struct {
 	bucket string
 }
 
+// NormalizeEndpoint splits an S3 host and whether TLS should be used.
+// An explicit http:// or https:// scheme wins over the ssl flag. A path is rejected.
+func NormalizeEndpoint(endpoint string, ssl bool) (host string, secure bool, err error) {
+	endpoint = strings.TrimSpace(endpoint)
+	switch {
+	case strings.HasPrefix(endpoint, "https://"):
+		secure = true
+		endpoint = strings.TrimPrefix(endpoint, "https://")
+	case strings.HasPrefix(endpoint, "http://"):
+		secure = false
+		endpoint = strings.TrimPrefix(endpoint, "http://")
+	default:
+		secure = ssl
+	}
+	endpoint = strings.TrimSuffix(endpoint, "/")
+	if endpoint == "" || strings.Contains(endpoint, "/") {
+		return "", false, fmt.Errorf("s3 endpoint must be host or host:port")
+	}
+	return endpoint, secure, nil
+}
+
 // NewS3 builds a client. endpoint may include a scheme.
 func NewS3(endpoint, bucket, access, secret, region string, ssl bool) (*S3, error) {
-	endpoint = strings.TrimSpace(endpoint)
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-	endpoint = strings.TrimSuffix(endpoint, "/")
-	if endpoint == "" || bucket == "" {
-		return nil, fmt.Errorf("s3 endpoint and bucket are required")
+	host, secure, err := NormalizeEndpoint(endpoint, ssl)
+	if err != nil {
+		return nil, err
 	}
-	client, err := minio.New(endpoint, &minio.Options{
+	if bucket == "" {
+		return nil, fmt.Errorf("s3 bucket is required")
+	}
+	client, err := minio.New(host, &minio.Options{
 		Creds:  credentials.NewStaticV4(access, secret, ""),
-		Secure: ssl,
+		Secure: secure,
 		Region: region,
 	})
 	if err != nil {
@@ -152,11 +185,17 @@ func (s *S3) EnsureBucket(ctx context.Context) error {
 }
 
 func (s *S3) Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) error {
+	if err := ValidateKey(key); err != nil {
+		return err
+	}
 	_, err := s.client.PutObject(ctx, s.bucket, key, r, size, minio.PutObjectOptions{ContentType: contentType})
 	return err
 }
 
 func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := ValidateKey(key); err != nil {
+		return nil, err
+	}
 	obj, err := s.client.GetObject(ctx, s.bucket, key, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, err
@@ -173,5 +212,8 @@ func (s *S3) Open(ctx context.Context, key string) (io.ReadCloser, error) {
 }
 
 func (s *S3) Delete(ctx context.Context, key string) error {
+	if err := ValidateKey(key); err != nil {
+		return err
+	}
 	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
 }

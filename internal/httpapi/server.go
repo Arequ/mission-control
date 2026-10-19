@@ -94,44 +94,44 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("DELETE /api/v1/tokens/{id}", s.withAPI("admin", http.HandlerFunc(s.deleteToken)))
 
 	mux.Handle("GET /api/v1/recipe-repos", s.withAPI("config:read", http.HandlerFunc(s.listRepos)))
-	mux.Handle("POST /api/v1/recipe-repos", s.withAPI("config:write", http.HandlerFunc(s.createRepo)))
+	mux.Handle("POST /api/v1/recipe-repos", s.withConfigWrite(http.HandlerFunc(s.createRepo)))
 	mux.Handle("GET /api/v1/recipe-repos/{id}", s.withAPI("config:read", http.HandlerFunc(s.getRepo)))
-	mux.Handle("PUT /api/v1/recipe-repos/{id}", s.withAPI("config:write", http.HandlerFunc(s.updateRepo)))
-	mux.Handle("DELETE /api/v1/recipe-repos/{id}", s.withAPI("config:write", http.HandlerFunc(s.deleteRepo)))
+	mux.Handle("PUT /api/v1/recipe-repos/{id}", s.withConfigWrite(http.HandlerFunc(s.updateRepo)))
+	mux.Handle("DELETE /api/v1/recipe-repos/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteRepo)))
 
 	mux.Handle("GET /api/v1/recipes", s.withAPI("config:read", http.HandlerFunc(s.listRecipes)))
-	mux.Handle("POST /api/v1/recipes", s.withAPI("config:write", http.HandlerFunc(s.createRecipe)))
+	mux.Handle("POST /api/v1/recipes", s.withConfigWrite(http.HandlerFunc(s.createRecipe)))
 	mux.Handle("GET /api/v1/recipes/{id}", s.withAPI("config:read", http.HandlerFunc(s.getRecipe)))
-	mux.Handle("PUT /api/v1/recipes/{id}", s.withAPI("config:write", http.HandlerFunc(s.updateRecipe)))
-	mux.Handle("DELETE /api/v1/recipes/{id}", s.withAPI("config:write", http.HandlerFunc(s.deleteRecipe)))
+	mux.Handle("PUT /api/v1/recipes/{id}", s.withConfigWrite(http.HandlerFunc(s.updateRecipe)))
+	mux.Handle("DELETE /api/v1/recipes/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteRecipe)))
 
 	mux.Handle("GET /api/v1/schedules", s.withAPI("config:read", http.HandlerFunc(s.listSchedules)))
-	mux.Handle("POST /api/v1/schedules", s.withAPI("config:write", http.HandlerFunc(s.createSchedule)))
+	mux.Handle("POST /api/v1/schedules", s.withConfigWrite(http.HandlerFunc(s.createSchedule)))
 	mux.Handle("GET /api/v1/schedules/{id}", s.withAPI("config:read", http.HandlerFunc(s.getSchedule)))
-	mux.Handle("PUT /api/v1/schedules/{id}", s.withAPI("config:write", http.HandlerFunc(s.updateSchedule)))
-	mux.Handle("DELETE /api/v1/schedules/{id}", s.withAPI("config:write", http.HandlerFunc(s.deleteSchedule)))
+	mux.Handle("PUT /api/v1/schedules/{id}", s.withConfigWrite(http.HandlerFunc(s.updateSchedule)))
+	mux.Handle("DELETE /api/v1/schedules/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteSchedule)))
 
 	mux.Handle("GET /api/v1/pipeline-settings", s.withAPI("config:read", http.HandlerFunc(s.getSettings)))
-	mux.Handle("PUT /api/v1/pipeline-settings", s.withAPI("config:write", http.HandlerFunc(s.updateSettings)))
-	mux.Handle("DELETE /api/v1/pipeline-settings", s.withAPI("config:write", http.HandlerFunc(s.resetSettings)))
+	mux.Handle("PUT /api/v1/pipeline-settings", s.withConfigWrite(http.HandlerFunc(s.updateSettings)))
+	mux.Handle("DELETE /api/v1/pipeline-settings", s.withConfigWrite(http.HandlerFunc(s.resetSettings)))
 
 	mux.Handle("GET /api/v1/promotion-rules", s.withAPI("config:read", http.HandlerFunc(s.listRules)))
-	mux.Handle("POST /api/v1/promotion-rules", s.withAPI("config:write", http.HandlerFunc(s.createRule)))
+	mux.Handle("POST /api/v1/promotion-rules", s.withConfigWrite(http.HandlerFunc(s.createRule)))
 	mux.Handle("GET /api/v1/promotion-rules/{id}", s.withAPI("config:read", http.HandlerFunc(s.getRule)))
-	mux.Handle("PUT /api/v1/promotion-rules/{id}", s.withAPI("config:write", http.HandlerFunc(s.updateRule)))
-	mux.Handle("DELETE /api/v1/promotion-rules/{id}", s.withAPI("config:write", http.HandlerFunc(s.deleteRule)))
+	mux.Handle("PUT /api/v1/promotion-rules/{id}", s.withConfigWrite(http.HandlerFunc(s.updateRule)))
+	mux.Handle("DELETE /api/v1/promotion-rules/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteRule)))
 
 	mux.Handle("GET /api/v1/runner-pools", s.withAPI("config:read", http.HandlerFunc(s.listPools)))
-	mux.Handle("POST /api/v1/runner-pools", s.withAPI("config:write", http.HandlerFunc(s.createPool)))
+	mux.Handle("POST /api/v1/runner-pools", s.withConfigWrite(http.HandlerFunc(s.createPool)))
 	mux.Handle("GET /api/v1/runner-pools/{id}", s.withAPI("config:read", http.HandlerFunc(s.getPool)))
-	mux.Handle("PUT /api/v1/runner-pools/{id}", s.withAPI("config:write", http.HandlerFunc(s.updatePool)))
-	mux.Handle("DELETE /api/v1/runner-pools/{id}", s.withAPI("config:write", http.HandlerFunc(s.deletePool)))
+	mux.Handle("PUT /api/v1/runner-pools/{id}", s.withConfigWrite(http.HandlerFunc(s.updatePool)))
+	mux.Handle("DELETE /api/v1/runner-pools/{id}", s.withConfigWrite(http.HandlerFunc(s.deletePool)))
 
 	mux.Handle("GET /api/v1/manifests", s.withAPI("config:read", http.HandlerFunc(s.listManifests)))
-	mux.Handle("POST /api/v1/manifests", s.withAPI("config:write", http.HandlerFunc(s.createManifest)))
+	mux.Handle("POST /api/v1/manifests", s.withConfigWrite(http.HandlerFunc(s.createManifest)))
 	mux.Handle("GET /api/v1/manifests/{id}", s.withAPI("config:read", http.HandlerFunc(s.getManifest)))
-	mux.Handle("PUT /api/v1/manifests/{id}", s.withAPI("config:write", http.HandlerFunc(s.updateManifest)))
-	mux.Handle("DELETE /api/v1/manifests/{id}", s.withAPI("config:write", http.HandlerFunc(s.deleteManifest)))
+	mux.Handle("PUT /api/v1/manifests/{id}", s.withConfigWrite(http.HandlerFunc(s.updateManifest)))
+	mux.Handle("DELETE /api/v1/manifests/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteManifest)))
 
 	mux.Handle("GET /api/v1/runners", s.withAPI("runners:read", http.HandlerFunc(s.listRunners)))
 	mux.Handle("DELETE /api/v1/runners/{id}", s.withAPI("runners:write", http.HandlerFunc(s.deleteRunner)))
@@ -164,12 +164,25 @@ func (s *Server) Handler() http.Handler {
 	return s.wrap(mux)
 }
 
+func devOrigin(origin string) bool {
+	switch origin {
+	case "http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8080", "http://127.0.0.1:8080":
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *Server) wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.devCORS {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			origin := r.Header.Get("Origin")
+			if devOrigin(origin) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Mission-Control-Client")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			}
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return

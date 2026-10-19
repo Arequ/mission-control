@@ -70,6 +70,13 @@ func main() {
 		}
 	}
 
+	if cfg.DevSeed {
+		if err := st.SeedDemo(ctx); err != nil {
+			log.Error("demo seed", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	srv := httpapi.New(httpapi.Options{
 		Store:        st,
 		Blobs:        blobs,

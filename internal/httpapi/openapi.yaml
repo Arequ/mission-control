@@ -4,9 +4,13 @@ info:
   version: 0.1.0
   description: |
     Versioned HTTP API for Mission Control. Configuration resources are written
-    by the Terraform provider and shown read-only in the UI. Runners call the
-    lease, log, artifact, and complete endpoints with a runner token. Munki
-    clients fetch catalogs, manifests, and packages under /repo.
+    by the Terraform provider and shown read-only in the UI. Config POST, PUT,
+    and DELETE require the header X-Mission-Control-Client: terraform in
+    addition to a token with config:write. Runners call the lease, log,
+    artifact, and complete endpoints with a runner token and the lease attempt.
+    Munki clients fetch catalogs, manifests, and packages under /repo.
+    Job and audit lists accept limit (default 100, max 500) and offset, and
+    return total.
 servers:
   - url: /
 security:
@@ -40,6 +44,52 @@ paths:
       summary: This document
       responses:
         "200": { description: OpenAPI YAML }
+  /openapi.yaml:
+    get:
+      tags: [meta]
+      security: []
+      summary: This document
+      responses:
+        "200": { description: OpenAPI YAML }
+  /api/v1/tokens:
+    get:
+      tags: [meta]
+      summary: List API tokens. The secret is not returned.
+      responses:
+        "200": { description: list }
+        "401": { description: unauthorized }
+        "403": { description: missing admin scope }
+    post:
+      tags: [meta]
+      summary: Create an API token. The secret is returned once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, scopes]
+              properties:
+                name: { type: string }
+                scopes:
+                  type: array
+                  items: { type: string }
+      responses:
+        "201": { description: created }
+        "400": { description: invalid body }
+        "401": { description: unauthorized }
+        "403": { description: missing admin scope }
+  /api/v1/tokens/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    delete:
+      tags: [meta]
+      summary: Delete an API token
+      responses:
+        "204": { description: deleted }
+        "401": { description: unauthorized }
+        "403": { description: missing admin scope }
+        "404": { description: not found }
   /api/v1/recipe-repos:
     get:
       tags: [config]
@@ -305,9 +355,13 @@ paths:
           schema: { type: string }
         - in: query
           name: limit
-          schema: { type: integer }
+          schema: { type: integer, default: 100, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
       responses:
-        "200": { description: list }
+        "200":
+          description: jobs, limit, offset, and total
     post:
       tags: [jobs]
       summary: Run a recipe now
@@ -393,19 +447,47 @@ paths:
   /api/v1/jobs/{id}/logs:
     post:
       tags: [runners]
-      summary: Append log lines for a leased job
+      summary: Append log lines for the current lease attempt
       parameters:
         - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attempt, lines]
+              properties:
+                attempt: { type: integer, minimum: 1 }
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      stream: { type: string, enum: [stdout, stderr] }
+                      line: { type: string }
       responses:
         "200": { description: stored }
+        "400": { description: attempt missing }
+        "403": { description: attempt does not match the current lease }
   /api/v1/jobs/{id}/renew:
     post:
       tags: [runners]
-      summary: Extend the lease and mark the job running
+      summary: Extend a lease that has not expired
       parameters:
         - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [attempt]
+              properties:
+                attempt: { type: integer, minimum: 1 }
       responses:
         "200": { description: new expiry }
+        "403": { description: lease expired or attempt does not match }
   /api/v1/jobs/{id}/artifacts:
     post:
       tags: [runners]
@@ -418,11 +500,16 @@ paths:
           multipart/form-data:
             schema:
               type: object
+              required: [attempt, pkginfo, package]
               properties:
+                attempt: { type: integer, minimum: 1 }
                 pkginfo: { type: string, format: binary }
                 package: { type: string, format: binary }
       responses:
         "200": { description: imported or already present }
+        "400": { description: invalid filename or missing attempt }
+        "409": { description: name and version already exist with different bytes }
+        "413": { description: upload exceeds the size limit }
   /api/v1/jobs/{id}/complete:
     post:
       tags: [runners]
@@ -435,14 +522,17 @@ paths:
           application/json:
             schema:
               type: object
-              required: [result]
+              required: [attempt, result]
               properties:
+                attempt: { type: integer, minimum: 1 }
                 result:
                   type: string
                   enum: [no_change, new_version, trust_failed, error]
                 error: { type: string }
       responses:
         "200": { description: job }
+        "400": { description: attempt missing or result invalid }
+        "403": { description: attempt does not match the current lease }
   /api/v1/catalogs:
     get:
       tags: [munki]
@@ -484,9 +574,17 @@ paths:
   /api/v1/audit:
     get:
       tags: [meta]
-      summary: Recent audit entries
+      summary: Audit entries, newest first
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100, maximum: 500 }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0, minimum: 0 }
       responses:
-        "200": { description: list }
+        "200":
+          description: audit, limit, offset, and total
   /repo/catalogs/{name}:
     get:
       tags: [munki]
@@ -575,6 +673,7 @@ components:
         name: { type: string }
         recipe_id: { type: string }
         cron: { type: string, description: Five-field cron, minute hour dom month dow }
+        timezone: { type: string, default: UTC, description: IANA timezone. Blank means UTC. }
         enabled: { type: boolean, default: true }
         managed_by: { type: string }
     PipelineSettings:

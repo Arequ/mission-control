@@ -3,6 +3,7 @@ package integration
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -108,14 +109,61 @@ func TestTerraformProviderCRUD(t *testing.T) {
 		t.Fatalf("manifests: %s", manifests)
 	}
 
-	plan := exec.Command("terraform", "plan", "-detailed-exitcode", "-input=false",
+	if _, err := st.UpdatePipelineSettings(ctx, model.Principal{Kind: "api", Name: "drift"}, model.PipelineSettings{
+		MaxConcurrency: 9, PerRunnerParallelism: 1, TimeoutSeconds: 3600,
+		MaxRetries: 2, LeaseSeconds: 300, ManagedBy: "terraform",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	drift := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
 		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
 		"-var", "max_concurrency=4", "-var", "soak_days=3")
-	plan.Dir = work
-	plan.Env = append(os.Environ(), "TF_CLI_CONFIG_FILE="+tfrc, "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1")
+	driftOut, driftErr := drift.CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(driftErr, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("out-of-band pipeline change should plan with exit 2, err=%v\n%s", driftErr, driftOut)
+	}
+
+	run("apply", "-auto-approve", "-input=false",
+		"-var", "endpoint="+ts.URL,
+		"-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4",
+		"-var", "soak_days=3",
+	)
+	plan := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
 	out, err := plan.CombinedOutput()
 	if err != nil {
 		t.Fatalf("unexpected drift: %v\n%s", err, out)
+	}
+
+	var listed struct {
+		Schedules []model.Schedule `json:"schedules"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/schedules")), &listed); err != nil {
+		t.Fatal(err)
+	}
+	var scheduleID string
+	for _, sc := range listed.Schedules {
+		if sc.Name == "firefox-morning" {
+			scheduleID = sc.ID
+		}
+	}
+	if scheduleID == "" {
+		t.Fatal("firefox-morning missing")
+	}
+	run("state", "rm", "missioncontrol_schedule.firefox_morning")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_schedule.firefox_morning", scheduleID)
+	imported := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = imported.CombinedOutput()
+	if err != nil {
+		t.Fatalf("imported schedule drifted: %v\n%s", err, out)
 	}
 
 	run("destroy", "-auto-approve", "-input=false",
@@ -131,6 +179,21 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if len(body.Recipes) != 0 {
 		t.Fatalf("recipes remain: %s", left)
 	}
+	settings = apiGet(t, ts.URL, "/api/v1/pipeline-settings")
+	if !strings.Contains(settings, `"max_concurrency":4`) && !strings.Contains(settings, `"max_concurrency": 4`) {
+		t.Fatalf("destroy should reset pipeline concurrency to the default: %s", settings)
+	}
+	if !strings.Contains(settings, `"lease_seconds":120`) && !strings.Contains(settings, `"lease_seconds": 120`) {
+		t.Fatalf("destroy should reset lease_seconds to the default 120: %s", settings)
+	}
+}
+
+func terraformCmd(t *testing.T, work, tfrc string, args ...string) *exec.Cmd {
+	t.Helper()
+	c := exec.Command("terraform", args...)
+	c.Dir = work
+	c.Env = append(os.Environ(), "TF_CLI_CONFIG_FILE="+tfrc, "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1")
+	return c
 }
 
 func apiGet(t *testing.T, base, path string) string {

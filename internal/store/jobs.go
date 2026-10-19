@@ -101,10 +101,11 @@ func (s *Store) insertJob(ctx context.Context, tx pgx.Tx, p model.Principal, rec
 
 // EnqueueDue creates a job for every schedule whose cron has fired since the last enqueue.
 // A recipe that already has a queued or in-flight scheduled job is skipped so missed windows collapse into one run.
+// The schedule row is locked so two replicas cannot both enqueue the same window.
 func (s *Store) EnqueueDue(ctx context.Context) (int, error) {
 	now := s.now()
 	rows, err := s.pool.Query(ctx, `
-		SELECT s.id, s.recipe_id, s.cron, s.last_enqueued_at
+		SELECT s.id
 		FROM schedules s
 		JOIN recipes r ON r.id = s.recipe_id
 		WHERE s.enabled AND r.enabled`)
@@ -112,56 +113,71 @@ func (s *Store) EnqueueDue(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	defer rows.Close()
-	type due struct {
-		id, recipe, cron string
-	}
-	var dues []due
+	var ids []string
 	for rows.Next() {
-		var id, recipe, expr string
-		var last *time.Time
-		if err := rows.Scan(&id, &recipe, &expr, &last); err != nil {
+		var id string
+		if err := rows.Scan(&id); err != nil {
 			return 0, err
 		}
-		ok, err := cronDue(expr, last, now)
-		if err != nil {
-			continue
-		}
-		if ok {
-			dues = append(dues, due{id, recipe, expr})
-		}
+		ids = append(ids, id)
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
 	n := 0
-	for _, d := range dues {
-		tx, err := s.pool.Begin(ctx)
+	for _, id := range ids {
+		added, err := s.enqueueSchedule(ctx, id, now)
 		if err != nil {
 			return n, err
 		}
-		var active int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM jobs
-			WHERE recipe_id=$1 AND trigger='schedule' AND status IN ('queued','leased','running')`, d.recipe).Scan(&active); err != nil {
-			_ = tx.Rollback(ctx)
-			return n, err
-		}
-		if active == 0 {
-			if _, err := s.insertJob(ctx, tx, model.System, d.recipe, &d.id, "schedule"); err != nil {
-				_ = tx.Rollback(ctx)
-				return n, err
-			}
+		if added {
 			n++
-		}
-		if _, err := tx.Exec(ctx, `UPDATE schedules SET last_enqueued_at=$2, updated_at=$2 WHERE id=$1`, d.id, now); err != nil {
-			_ = tx.Rollback(ctx)
-			return n, err
-		}
-		if err := tx.Commit(ctx); err != nil {
-			return n, err
 		}
 	}
 	return n, nil
+}
+
+func (s *Store) enqueueSchedule(ctx context.Context, id string, now time.Time) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	var recipe, expr, tz string
+	var last *time.Time
+	err = tx.QueryRow(ctx, `
+		SELECT recipe_id, cron, timezone, last_enqueued_at
+		FROM schedules WHERE id=$1 FOR UPDATE`, id).Scan(&recipe, &expr, &tz, &last)
+	if err != nil {
+		return false, err
+	}
+	due, err := cronDue(expr, tz, last, now)
+	if err != nil || !due {
+		if err != nil {
+			return false, tx.Commit(ctx)
+		}
+		return false, tx.Commit(ctx)
+	}
+	var active int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM jobs
+		WHERE recipe_id=$1 AND trigger='schedule' AND status IN ('queued','leased','running')`, recipe).Scan(&active); err != nil {
+		return false, err
+	}
+	added := false
+	if active == 0 {
+		if _, err := s.insertJob(ctx, tx, model.System, recipe, &id, "schedule"); err != nil {
+			return false, err
+		}
+		added = true
+	}
+	if _, err := tx.Exec(ctx, `UPDATE schedules SET last_enqueued_at=$2, updated_at=$2 WHERE id=$1`, id, now); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return added, nil
 }
 
 // ReclaimExpired requeues leased jobs whose lease has lapsed, or fails them when retries are exhausted.
@@ -344,7 +360,9 @@ func (s *Store) listReposTx(ctx context.Context, tx pgx.Tx) ([]model.RecipeRepo,
 }
 
 // RenewLease extends a lease the runner still owns and marks the job running.
-func (s *Store) RenewLease(ctx context.Context, jobID, runnerID string) (time.Time, error) {
+// The attempt must match the current lease, and the lease must not already have expired.
+// A stale runner cannot extend a lease after it was reassigned or after expiry.
+func (s *Store) RenewLease(ctx context.Context, jobID, runnerID string, attempt int) (time.Time, error) {
 	settings, err := s.GetPipelineSettings(ctx)
 	if err != nil {
 		return time.Time{}, err
@@ -353,8 +371,9 @@ func (s *Store) RenewLease(ctx context.Context, jobID, runnerID string) (time.Ti
 	exp := now.Add(time.Duration(settings.LeaseSeconds) * time.Second)
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE jobs SET lease_expires_at=$3, status=$4, updated_at=$5
-		WHERE id=$1 AND runner_id=$2 AND status IN ('leased','running')`,
-		jobID, runnerID, exp, jobRunning, now)
+		WHERE id=$1 AND runner_id=$2 AND attempt=$6 AND status IN ('leased','running')
+		  AND lease_expires_at IS NOT NULL AND lease_expires_at > $5`,
+		jobID, runnerID, exp, jobRunning, now, attempt)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -365,7 +384,8 @@ func (s *Store) RenewLease(ctx context.Context, jobID, runnerID string) (time.Ti
 }
 
 // AppendLogs stores runner output and moves the job to running.
-func (s *Store) AppendLogs(ctx context.Context, jobID, runnerID string, lines []model.LogLine) error {
+// attempt must be the lease the runner was given; a previous attempt cannot write into a reassigned job.
+func (s *Store) AppendLogs(ctx context.Context, jobID, runnerID string, attempt int, lines []model.LogLine) error {
 	if len(lines) == 0 {
 		return nil
 	}
@@ -375,7 +395,8 @@ func (s *Store) AppendLogs(ctx context.Context, jobID, runnerID string, lines []
 	}
 	var ok bool
 	err = tx.QueryRow(ctx, `
-		SELECT true FROM jobs WHERE id=$1 AND runner_id=$2 AND status IN ('leased','running')`, jobID, runnerID).Scan(&ok)
+		SELECT true FROM jobs WHERE id=$1 AND runner_id=$2 AND attempt=$3 AND status IN ('leased','running') FOR UPDATE`,
+		jobID, runnerID, attempt).Scan(&ok)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		if notFound(err) == ErrNotFound {
@@ -406,7 +427,9 @@ func (s *Store) AppendLogs(ctx context.Context, jobID, runnerID string, lines []
 }
 
 // CompleteJob records the runner's result. Retryable errors go back on the queue until max attempts.
-func (s *Store) CompleteJob(ctx context.Context, jobID, runnerID, result, errMsg string) (model.Job, error) {
+// attempt must match the current lease so a stale runner cannot finish a job after it was reassigned,
+// including when the same runner received the job again.
+func (s *Store) CompleteJob(ctx context.Context, jobID, runnerID string, attempt int, result, errMsg string) (model.Job, error) {
 	switch result {
 	case resultNoChange, resultNewVersion, resultTrustFailed, resultError:
 	default:
@@ -417,10 +440,11 @@ func (s *Store) CompleteJob(ctx context.Context, jobID, runnerID, result, errMsg
 		return model.Job{}, err
 	}
 	var status string
-	var attempt, max int
+	var max int
+	var currentAttempt int
 	err = tx.QueryRow(ctx, `
-		SELECT status, attempt, max_attempts FROM jobs WHERE id=$1 AND runner_id=$2 FOR UPDATE`, jobID, runnerID).
-		Scan(&status, &attempt, &max)
+		SELECT status, attempt, max_attempts FROM jobs WHERE id=$1 AND runner_id=$2 AND attempt=$3 FOR UPDATE`, jobID, runnerID, attempt).
+		Scan(&status, &currentAttempt, &max)
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		if notFound(err) == ErrNotFound {
@@ -439,7 +463,7 @@ func (s *Store) CompleteJob(ctx context.Context, jobID, runnerID, result, errMsg
 	case resultTrustFailed:
 		newStatus = jobFailed
 	case resultError:
-		if attempt < max {
+		if currentAttempt < max {
 			requeue = true
 			newStatus = jobQueued
 		} else {
@@ -502,10 +526,18 @@ func (s *Store) jobLogs(ctx context.Context, id string) ([]model.LogLine, error)
 	return out, rows.Err()
 }
 
-// ListJobs returns recent jobs, optionally filtered by recipe.
-func (s *Store) ListJobs(ctx context.Context, recipeID string, limit int) ([]model.Job, error) {
-	if limit <= 0 || limit > 500 {
-		limit = 100
+// ListJobs returns jobs, optionally filtered by recipe, plus the total matching count.
+func (s *Store) ListJobs(ctx context.Context, recipeID string, limit, offset int) ([]model.Job, int, error) {
+	limit, offset = pageWindow(limit, offset)
+	countQ := `SELECT count(*) FROM jobs j`
+	countArgs := []any{}
+	if recipeID != "" {
+		countQ += ` WHERE j.recipe_id=$1`
+		countArgs = append(countArgs, recipeID)
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx, countQ, countArgs...).Scan(&total); err != nil {
+		return nil, 0, err
 	}
 	q := `SELECT ` + jobCols + ` ` + jobFrom
 	args := []any{}
@@ -515,32 +547,33 @@ func (s *Store) ListJobs(ctx context.Context, recipeID string, limit int) ([]mod
 	}
 	q += ` ORDER BY j.created_at DESC LIMIT `
 	if recipeID != "" {
-		q += `$2`
+		q += `$2 OFFSET $3`
 	} else {
-		q += `$1`
+		q += `$1 OFFSET $2`
 	}
-	args = append(args, limit)
+	args = append(args, limit, offset)
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	out := []model.Job{}
 	for rows.Next() {
 		j, err := scanJob(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, j)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }
 
-// RunnerOwnsJob reports whether the runner currently holds the job.
-func (s *Store) RunnerOwnsJob(ctx context.Context, jobID, runnerID string) (bool, error) {
+// RunnerOwnsJob reports whether the runner currently holds this lease attempt.
+func (s *Store) RunnerOwnsJob(ctx context.Context, jobID, runnerID string, attempt int) (bool, error) {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT true FROM jobs WHERE id=$1 AND runner_id=$2 AND status IN ('leased','running')`, jobID, runnerID).Scan(&ok)
+		SELECT true FROM jobs WHERE id=$1 AND runner_id=$2 AND attempt=$3 AND status IN ('leased','running')`,
+		jobID, runnerID, attempt).Scan(&ok)
 	if err != nil {
 		if notFound(err) == ErrNotFound {
 			return false, nil

@@ -65,6 +65,7 @@ type Schedule struct {
 	RecipeID         string     `json:"recipe_id"`
 	RecipeIdentifier string     `json:"recipe_identifier,omitempty"`
 	Cron             string     `json:"cron"`
+	Timezone         string     `json:"timezone"`
 	Enabled          bool       `json:"enabled"`
 	ManagedBy        string     `json:"managed_by"`
 	LastEnqueuedAt   *time.Time `json:"last_enqueued_at,omitempty"`
