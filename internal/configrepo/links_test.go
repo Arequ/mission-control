@@ -10,8 +10,9 @@ func TestKindPaths(t *testing.T) {
 	want := map[Kind]Location{
 		KindRecipe:                {KindRecipe, "autopkg/recipes.tf", "autopkg"},
 		KindSchedule:              {KindSchedule, "autopkg/schedules.tf", "autopkg"},
-		KindRunnerPool:            {KindRunnerPool, "autopkg/runner_pools.tf", "autopkg"},
-		KindMunkiCatalog:          {KindMunkiCatalog, "", "munki"},
+		KindPipeline:              {KindPipeline, "autopkg/pipeline.tf", "autopkg"},
+		KindRunnerPool:            {KindRunnerPool, "autopkg/runners.tf", "autopkg"},
+		KindMunkiCatalog:          {KindMunkiCatalog, "munki/catalogs.tf", "munki"},
 		KindMunkiManifest:         {KindMunkiManifest, "munki/manifests.tf", "munki"},
 		KindMunkiPromotion:        {KindMunkiPromotion, "munki/promotion.tf", "munki"},
 		KindOSPolicy:              {KindOSPolicy, "munki/os_policy.tf", "munki"},
@@ -21,8 +22,8 @@ func TestKindPaths(t *testing.T) {
 		KindSourceConnector:       {KindSourceConnector, "sources/connectors.tf", "sources"},
 		KindLogView:               {KindLogView, "logs/views.tf", "logs"},
 		KindVulnerabilitySettings: {KindVulnerabilitySettings, "vulnerabilities/settings.tf", "vulnerabilities"},
-		KindCPEOverride:           {KindCPEOverride, "vulnerabilities/cpe_overrides.tf", "vulnerabilities"},
-		KindSLA:                   {KindSLA, "vulnerabilities/sla.tf", "vulnerabilities"},
+		KindCPEOverride:           {KindCPEOverride, "vulnerabilities/settings.tf", "vulnerabilities"},
+		KindSLA:                   {KindSLA, "vulnerabilities/settings.tf", "vulnerabilities"},
 	}
 	if len(Kinds()) != len(want) {
 		t.Fatalf("kinds %d want %d", len(Kinds()), len(want))
@@ -155,16 +156,114 @@ func TestPullRequestClipsLongNames(t *testing.T) {
 	}
 }
 
-func TestDirectoryPullRequest(t *testing.T) {
+func TestCatalogPullRequest(t *testing.T) {
 	link, _, body, err := PullRequestLink(Default(), KindMunkiCatalog, "Catalogs", "testing and production")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(link, "/compare/main...main?") || !strings.Contains(body, "Directory: munki/") {
+	if !strings.Contains(link, "/compare/main...main?") || !strings.Contains(body, "File: munki/catalogs.tf") {
 		t.Fatalf("%s\n%s", link, body)
 	}
-	if !strings.Contains(body, "/tree/main/munki") || strings.Contains(body, "/edit/") {
+	if !strings.Contains(body, "/edit/main/munki/catalogs.tf") {
 		t.Fatal(body)
+	}
+}
+
+// configRepoFiles is the .tf inventory of Arequ/terraform-mission-control.
+// A mapped path that is not in this set is a file the config repo does not have.
+var configRepoFiles = []string{
+	"access/outputs.tf",
+	"access/scopes.tf",
+	"access/versions.tf",
+	"autopkg/outputs.tf",
+	"autopkg/pipeline.tf",
+	"autopkg/recipes.tf",
+	"autopkg/repos.tf",
+	"autopkg/runners.tf",
+	"autopkg/schedules.tf",
+	"autopkg/variables.tf",
+	"autopkg/versions.tf",
+	"logs/outputs.tf",
+	"logs/variables.tf",
+	"logs/versions.tf",
+	"logs/views.tf",
+	"munki/catalogs.tf",
+	"munki/manifests.tf",
+	"munki/os_policy.tf",
+	"munki/outputs.tf",
+	"munki/promotion.tf",
+	"munki/variables.tf",
+	"munki/versions.tf",
+	"osquery/enroll.tf",
+	"osquery/labels.tf",
+	"osquery/outputs.tf",
+	"osquery/packs.tf",
+	"osquery/queries.tf",
+	"osquery/variables.tf",
+	"osquery/versions.tf",
+	"sources/connectors.tf",
+	"sources/locals.tf",
+	"sources/outputs.tf",
+	"sources/variables.tf",
+	"sources/versions.tf",
+	"vulnerabilities/outputs.tf",
+	"vulnerabilities/settings.tf",
+	"vulnerabilities/variables.tf",
+	"vulnerabilities/versions.tf",
+	"backend.tf",
+	"main.tf",
+	"outputs.tf",
+	"providers.tf",
+	"variables.tf",
+	"versions.tf",
+}
+
+func TestMappedPathsAreRealFiles(t *testing.T) {
+	files := map[string]bool{}
+	for _, path := range configRepoFiles {
+		if files[path] {
+			t.Fatalf("duplicate allowlist path %s", path)
+		}
+		files[path] = true
+	}
+	if len(files) != 44 {
+		t.Fatalf("allowlist has %d files, want 44", len(files))
+	}
+	used := map[string]bool{}
+	for _, kind := range Kinds() {
+		loc, ok := Lookup(kind)
+		if !ok || loc.Path == "" || !files[loc.Path] {
+			t.Fatalf("%s path %q is not in the config repo", kind, loc.Path)
+		}
+		used[loc.Path] = true
+	}
+	shared := []Kind{KindVulnerabilitySettings, KindCPEOverride, KindSLA}
+	for _, kind := range shared {
+		loc, _ := Lookup(kind)
+		if loc.Path != "vulnerabilities/settings.tf" {
+			t.Fatalf("%s path %s", kind, loc.Path)
+		}
+	}
+	checks := map[Kind]string{
+		KindPipeline:     "autopkg/pipeline.tf",
+		KindRunnerPool:   "autopkg/runners.tf",
+		KindMunkiCatalog: "munki/catalogs.tf",
+	}
+	for kind, path := range checks {
+		loc, _ := Lookup(kind)
+		if loc.Path != path {
+			t.Fatalf("%s path %s want %s", kind, loc.Path, path)
+		}
+	}
+	// Real files with no propose target: recipe repos and enroll secrets
+	// are API and Terraform only, and access/ is not a UI config surface.
+	for _, path := range []string{"autopkg/repos.tf", "osquery/enroll.tf", "access/scopes.tf"} {
+		if !files[path] {
+			t.Fatalf("allowlist dropped %s", path)
+		}
+		if used[path] {
+			t.Fatalf("%s is mapped but has no propose target", path)
+		}
 	}
 }
 

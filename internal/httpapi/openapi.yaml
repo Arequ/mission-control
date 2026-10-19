@@ -1196,6 +1196,7 @@ components:
           properties:
             recipe: { type: string }
             schedule: { type: string }
+            pipeline: { type: string }
             runner_pool: { type: string }
             munki_catalog: { type: string }
             munki_manifest: { type: string }

@@ -27,6 +27,7 @@ type Kind string
 const (
 	KindRecipe                Kind = "recipe"
 	KindSchedule              Kind = "schedule"
+	KindPipeline              Kind = "pipeline"
 	KindRunnerPool            Kind = "runner_pool"
 	KindMunkiCatalog          Kind = "munki_catalog"
 	KindMunkiManifest         Kind = "munki_manifest"
@@ -50,16 +51,18 @@ type Location struct {
 	Dir  string
 }
 
-// locations is the stable layout of Arequ/terraform-mission-control.
-// munki/promotion.tf, munki/manifests.tf, and munki/os_policy.tf are single files.
-// The other domains keep one resource file per kind. Catalogs are generated, so
-// they open the munki directory. access/ holds enroll and API access and is not
-// a propose target.
+// locations is the file layout of Arequ/terraform-mission-control.
+// Every path below is a .tf file in that repo. CPE overrides and SLA are
+// blocks in vulnerabilities/settings.tf, next to the other vulnerability
+// settings. Runner pools live in autopkg/runners.tf. Catalogs are
+// munki/catalogs.tf. access/, autopkg/repos.tf, and osquery/enroll.tf are
+// real files with no propose target in the UI.
 var locations = []Location{
 	{KindRecipe, "autopkg/recipes.tf", "autopkg"},
 	{KindSchedule, "autopkg/schedules.tf", "autopkg"},
-	{KindRunnerPool, "autopkg/runner_pools.tf", "autopkg"},
-	{KindMunkiCatalog, "", "munki"},
+	{KindPipeline, "autopkg/pipeline.tf", "autopkg"},
+	{KindRunnerPool, "autopkg/runners.tf", "autopkg"},
+	{KindMunkiCatalog, "munki/catalogs.tf", "munki"},
 	{KindMunkiManifest, "munki/manifests.tf", "munki"},
 	{KindMunkiPromotion, "munki/promotion.tf", "munki"},
 	{KindOSPolicy, "munki/os_policy.tf", "munki"},
@@ -69,8 +72,8 @@ var locations = []Location{
 	{KindSourceConnector, "sources/connectors.tf", "sources"},
 	{KindLogView, "logs/views.tf", "logs"},
 	{KindVulnerabilitySettings, "vulnerabilities/settings.tf", "vulnerabilities"},
-	{KindCPEOverride, "vulnerabilities/cpe_overrides.tf", "vulnerabilities"},
-	{KindSLA, "vulnerabilities/sla.tf", "vulnerabilities"},
+	{KindCPEOverride, "vulnerabilities/settings.tf", "vulnerabilities"},
+	{KindSLA, "vulnerabilities/settings.tf", "vulnerabilities"},
 }
 
 var byKind map[Kind]Location

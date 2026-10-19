@@ -4,6 +4,7 @@
 export type ConfigKind =
   | "recipe"
   | "schedule"
+  | "pipeline"
   | "runner_pool"
   | "munki_catalog"
   | "munki_manifest"
@@ -23,8 +24,9 @@ type Target = { path?: string; dir: string };
 export const CONFIG_TARGETS: Record<ConfigKind, Target> = {
   recipe: { path: "autopkg/recipes.tf", dir: "autopkg" },
   schedule: { path: "autopkg/schedules.tf", dir: "autopkg" },
-  runner_pool: { path: "autopkg/runner_pools.tf", dir: "autopkg" },
-  munki_catalog: { dir: "munki" },
+  pipeline: { path: "autopkg/pipeline.tf", dir: "autopkg" },
+  runner_pool: { path: "autopkg/runners.tf", dir: "autopkg" },
+  munki_catalog: { path: "munki/catalogs.tf", dir: "munki" },
   munki_manifest: { path: "munki/manifests.tf", dir: "munki" },
   munki_promotion: { path: "munki/promotion.tf", dir: "munki" },
   os_policy: { path: "munki/os_policy.tf", dir: "munki" },
@@ -34,8 +36,8 @@ export const CONFIG_TARGETS: Record<ConfigKind, Target> = {
   source_connector: { path: "sources/connectors.tf", dir: "sources" },
   log_view: { path: "logs/views.tf", dir: "logs" },
   vulnerability_settings: { path: "vulnerabilities/settings.tf", dir: "vulnerabilities" },
-  cpe_override: { path: "vulnerabilities/cpe_overrides.tf", dir: "vulnerabilities" },
-  sla: { path: "vulnerabilities/sla.tf", dir: "vulnerabilities" },
+  cpe_override: { path: "vulnerabilities/settings.tf", dir: "vulnerabilities" },
+  sla: { path: "vulnerabilities/settings.tf", dir: "vulnerabilities" },
 };
 
 export const DEFAULT_REPO = "Arequ/terraform-mission-control";
