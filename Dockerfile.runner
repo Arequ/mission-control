@@ -1,0 +1,17 @@
+FROM golang:1.22-bookworm AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/mc-runner ./cmd/mc-runner \
+ && CGO_ENABLED=0 go build -o /out/fake-autopkg ./cmd/fake-autopkg
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates git
+COPY --from=build /out/mc-runner /usr/local/bin/mc-runner
+COPY --from=build /out/fake-autopkg /usr/local/bin/fake-autopkg
+ENV MC_AUTOPKG=/usr/local/bin/fake-autopkg \
+    MC_AUTOPKG_VERSION=fake \
+    MC_RUNNER_STATE=/var/lib/mc-runner/state.json \
+    MC_REPO_CACHE=/var/lib/mc-runner/repos
+ENTRYPOINT ["/usr/local/bin/mc-runner"]

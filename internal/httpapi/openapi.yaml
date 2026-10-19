@@ -1,0 +1,631 @@
+openapi: 3.0.3
+info:
+  title: Mission Control API
+  version: 0.1.0
+  description: |
+    Versioned HTTP API for Mission Control. Configuration resources are written
+    by the Terraform provider and shown read-only in the UI. Runners call the
+    lease, log, artifact, and complete endpoints with a runner token. Munki
+    clients fetch catalogs, manifests, and packages under /repo.
+servers:
+  - url: /
+security:
+  - bearerAuth: []
+tags:
+  - name: config
+  - name: jobs
+  - name: runners
+  - name: munki
+  - name: meta
+paths:
+  /healthz:
+    get:
+      tags: [meta]
+      security: []
+      summary: Liveness
+      responses:
+        "200": { description: ok }
+  /readyz:
+    get:
+      tags: [meta]
+      security: []
+      summary: Readiness (database ping)
+      responses:
+        "200": { description: ready }
+        "503": { description: database unavailable }
+  /api/v1/openapi.yaml:
+    get:
+      tags: [meta]
+      security: []
+      summary: This document
+      responses:
+        "200": { description: OpenAPI YAML }
+  /api/v1/recipe-repos:
+    get:
+      tags: [config]
+      summary: List recipe repositories
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a recipe repository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecipeRepoWrite" }
+      responses:
+        "201": { description: created }
+  /api/v1/recipe-repos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a recipe repository
+      responses:
+        "200": { description: repo }
+    put:
+      tags: [config]
+      summary: Replace a recipe repository
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecipeRepoWrite" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a recipe repository
+      responses:
+        "204": { description: deleted }
+  /api/v1/recipes:
+    get:
+      tags: [config]
+      summary: List recipes and their latest run
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a recipe override
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecipeWrite" }
+      responses:
+        "201": { description: created }
+  /api/v1/recipes/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a recipe
+      responses:
+        "200": { description: recipe }
+    put:
+      tags: [config]
+      summary: Replace a recipe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RecipeWrite" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a recipe
+      responses:
+        "204": { description: deleted }
+  /api/v1/schedules:
+    get:
+      tags: [config]
+      summary: List schedules
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScheduleWrite" }
+      responses:
+        "201": { description: created }
+  /api/v1/schedules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a schedule
+      responses:
+        "200": { description: schedule }
+    put:
+      tags: [config]
+      summary: Replace a schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ScheduleWrite" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a schedule
+      responses:
+        "204": { description: deleted }
+  /api/v1/pipeline-settings:
+    get:
+      tags: [config]
+      summary: Get fleet pipeline settings
+      responses:
+        "200": { description: settings }
+    put:
+      tags: [config]
+      summary: Replace fleet pipeline settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PipelineSettings" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Reset pipeline settings to defaults
+      responses:
+        "200": { description: defaults }
+  /api/v1/promotion-rules:
+    get:
+      tags: [config]
+      summary: List promotion rules
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a promotion rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromotionRuleWrite" }
+      responses:
+        "201": { description: created }
+  /api/v1/promotion-rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a promotion rule
+      responses:
+        "200": { description: rule }
+    put:
+      tags: [config]
+      summary: Replace a promotion rule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromotionRuleWrite" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a promotion rule
+      responses:
+        "204": { description: deleted }
+  /api/v1/runner-pools:
+    get:
+      tags: [config]
+      summary: List runner pools
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a runner pool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerPoolWrite" }
+      responses:
+        "201": { description: created }
+  /api/v1/runner-pools/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a runner pool
+      responses:
+        "200": { description: pool }
+    put:
+      tags: [config]
+      summary: Replace a runner pool
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/RunnerPoolWrite" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a runner pool
+      responses:
+        "204": { description: deleted }
+  /api/v1/manifests:
+    get:
+      tags: [config]
+      summary: List Munki manifests
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a manifest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManifestWrite" }
+      responses:
+        "201": { description: created }
+  /api/v1/manifests/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a manifest
+      responses:
+        "200": { description: manifest }
+    put:
+      tags: [config]
+      summary: Replace a manifest
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ManifestWrite" }
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a manifest
+      responses:
+        "204": { description: deleted }
+  /api/v1/jobs:
+    get:
+      tags: [jobs]
+      summary: List runs
+      parameters:
+        - in: query
+          name: recipe_id
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer }
+      responses:
+        "200": { description: list }
+    post:
+      tags: [jobs]
+      summary: Run a recipe now
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recipe_id]
+              properties:
+                recipe_id: { type: string }
+      responses:
+        "201": { description: queued job }
+  /api/v1/jobs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [jobs]
+      summary: Get a run, including logs
+      responses:
+        "200": { description: job }
+  /api/v1/runners:
+    get:
+      tags: [runners]
+      summary: List registered runners
+      responses:
+        "200": { description: list }
+  /api/v1/runners/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    delete:
+      tags: [runners]
+      summary: Delete a runner
+      responses:
+        "204": { description: deleted }
+  /api/v1/runners/register:
+    post:
+      tags: [runners]
+      summary: Register a runner with a bootstrap token
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                labels:
+                  type: array
+                  items: { type: string }
+                pool: { type: string, description: Pool name }
+                hostname: { type: string }
+                os_version: { type: string }
+                autopkg_version: { type: string }
+      responses:
+        "201":
+          description: Runner plus a one-time runner token
+  /api/v1/runners/heartbeat:
+    post:
+      tags: [runners]
+      summary: Runner heartbeat
+      responses:
+        "200": { description: ok }
+  /api/v1/runners/lease:
+    post:
+      tags: [runners]
+      summary: Long-poll for a job lease
+      parameters:
+        - in: query
+          name: wait
+          schema: { type: string, enum: ["0"] }
+          description: Set to 0 to return immediately
+        - in: query
+          name: wait_seconds
+          schema: { type: integer, maximum: 60 }
+      responses:
+        "200": { description: a lease }
+        "204": { description: nothing queued }
+  /api/v1/jobs/{id}/logs:
+    post:
+      tags: [runners]
+      summary: Append log lines for a leased job
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200": { description: stored }
+  /api/v1/jobs/{id}/renew:
+    post:
+      tags: [runners]
+      summary: Extend the lease and mark the job running
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200": { description: new expiry }
+  /api/v1/jobs/{id}/artifacts:
+    post:
+      tags: [runners]
+      summary: Upload pkginfo and a package
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                pkginfo: { type: string, format: binary }
+                package: { type: string, format: binary }
+      responses:
+        "200": { description: imported or already present }
+  /api/v1/jobs/{id}/complete:
+    post:
+      tags: [runners]
+      summary: Finish a job
+      parameters:
+        - $ref: "#/components/parameters/id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [result]
+              properties:
+                result:
+                  type: string
+                  enum: [no_change, new_version, trust_failed, error]
+                error: { type: string }
+      responses:
+        "200": { description: job }
+  /api/v1/catalogs:
+    get:
+      tags: [munki]
+      summary: List generated catalogs
+      responses:
+        "200": { description: list }
+  /api/v1/packages:
+    get:
+      tags: [munki]
+      summary: List packages
+      parameters:
+        - in: query
+          name: catalog
+          schema: { type: string }
+      responses:
+        "200": { description: list }
+  /api/v1/packages/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [munki]
+      summary: Get a package
+      responses:
+        "200": { description: package }
+  /api/v1/packages/{id}/promote:
+    post:
+      tags: [munki]
+      summary: Manually promote a package to the next catalog
+      parameters:
+        - $ref: "#/components/parameters/id"
+      responses:
+        "200": { description: promoted package }
+  /api/v1/promotions/run:
+    post:
+      tags: [munki]
+      summary: Run the promotion pass now
+      responses:
+        "200": { description: count promoted }
+  /api/v1/audit:
+    get:
+      tags: [meta]
+      summary: Recent audit entries
+      responses:
+        "200": { description: list }
+  /repo/catalogs/{name}:
+    get:
+      tags: [munki]
+      summary: Munki catalog plist
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: XML plist catalog }
+  /repo/manifests/{name}:
+    get:
+      tags: [munki]
+      summary: Munki manifest plist
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: XML plist manifest }
+  /repo/pkgs/{path}:
+    get:
+      tags: [munki]
+      summary: Package bytes
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: package }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Password is the repo token or an API token with munki:read.
+  parameters:
+    id:
+      in: path
+      name: id
+      required: true
+      schema: { type: string }
+  schemas:
+    RecipeRepoWrite:
+      type: object
+      required: [name, url]
+      properties:
+        name: { type: string }
+        url: { type: string }
+        ref: { type: string, default: main }
+        managed_by: { type: string, example: terraform }
+    RecipeWrite:
+      type: object
+      required: [identifier, name]
+      properties:
+        identifier: { type: string }
+        name: { type: string }
+        repo_id: { type: string, nullable: true }
+        enabled: { type: boolean, default: true }
+        override: { type: string }
+        trust_info: { type: object, additionalProperties: true }
+        runner_pool_id: { type: string, nullable: true }
+        labels:
+          type: array
+          items: { type: string }
+        managed_by: { type: string }
+    ScheduleWrite:
+      type: object
+      required: [name, recipe_id, cron]
+      properties:
+        name: { type: string }
+        recipe_id: { type: string }
+        cron: { type: string, description: Five-field cron, minute hour dom month dow }
+        enabled: { type: boolean, default: true }
+        managed_by: { type: string }
+    PipelineSettings:
+      type: object
+      required: [max_concurrency, per_runner_parallelism, timeout_seconds, max_retries, lease_seconds]
+      properties:
+        max_concurrency: { type: integer, minimum: 1 }
+        per_runner_parallelism: { type: integer, minimum: 1 }
+        timeout_seconds: { type: integer, minimum: 1 }
+        max_retries: { type: integer, minimum: 0 }
+        lease_seconds: { type: integer, minimum: 5 }
+        managed_by: { type: string }
+    PromotionRuleWrite:
+      type: object
+      required: [name, from_catalog, to_catalog]
+      properties:
+        name: { type: string }
+        from_catalog: { type: string }
+        to_catalog: { type: string }
+        soak_days: { type: integer, minimum: 0 }
+        manual_hold: { type: boolean }
+        enabled: { type: boolean, default: true }
+        managed_by: { type: string }
+    RunnerPoolWrite:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+        managed_by: { type: string }
+    ManifestWrite:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        catalogs:
+          type: array
+          items: { type: string }
+        included_manifests:
+          type: array
+          items: { type: string }
+        managed_installs:
+          type: array
+          items: { type: string }
+        optional_installs:
+          type: array
+          items: { type: string }
+        managed_uninstalls:
+          type: array
+          items: { type: string }
+        managed_by: { type: string }
