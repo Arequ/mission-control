@@ -108,100 +108,185 @@ locals {
 }
 
 resource "missioncontrol_source_connector" "osquery" {
-  name                 = "osquery"
-  source               = "osquery"
-  mode                 = "native"
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "osquery"
+  source              = "osquery"
+  mode                = "native"
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "munki" {
-  name                 = "munki"
-  source               = "munki"
-  mode                 = "native"
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "munki"
+  source              = "munki"
+  mode                = "native"
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "crowdstrike" {
-  name                 = "crowdstrike"
-  source               = "crowdstrike"
-  mode                 = "api"
-  base_url             = "https://api.crowdstrike.com"
-  client_id            = "example-crowdstrike-client"
-  client_secret        = var.crowdstrike_client_secret
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "crowdstrike"
+  source              = "crowdstrike"
+  mode                = "api"
+  base_url            = "https://api.crowdstrike.com"
+  client_id           = "example-crowdstrike-client"
+  client_secret       = var.crowdstrike_client_secret
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "kolide" {
-  name                 = "kolide"
-  source               = "kolide"
-  mode                 = "api"
-  base_url             = "https://k2.kolide.com"
-  api_token            = var.kolide_api_token
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "kolide"
+  source              = "kolide"
+  mode                = "api"
+  base_url            = "https://k2.kolide.com"
+  api_token           = var.kolide_api_token
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "rapid7" {
-  name                 = "rapid7"
-  source               = "rapid7"
-  mode                 = "elastic"
-  elastic_url          = "https://elasticsearch.example.invalid"
-  elastic_api_key      = var.elastic_api_key
-  index_pattern        = "logs-rapid7.insight-*"
-  query_language       = "kql"
-  query                = "event.dataset:\"rapid7.insight\""
-  time_field           = "@timestamp"
-  field_map            = local.security_field_map
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "rapid7"
+  source              = "rapid7"
+  mode                = "elastic"
+  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_api_key     = var.elastic_api_key
+  index_pattern       = "logs-rapid7.insight-*"
+  query_language      = "kql"
+  query               = "event.dataset:\"rapid7.insight\""
+  time_field          = "@timestamp"
+  field_map           = local.security_field_map
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "netskope" {
-  name                 = "netskope"
-  source               = "netskope"
-  mode                 = "elastic"
-  elastic_url          = "https://elasticsearch.example.invalid"
-  elastic_api_key      = var.elastic_api_key
-  index_pattern        = "logs-netskope.events-*"
-  query_language       = "kql"
-  query                = "event.dataset:\"netskope.events\""
-  time_field           = "@timestamp"
-  field_map            = local.security_field_map
-  stale_after_seconds  = 604800
-  interval_seconds     = 86400
+  name                = "netskope"
+  source              = "netskope"
+  mode                = "elastic"
+  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_api_key     = var.elastic_api_key
+  index_pattern       = "logs-netskope.events-*"
+  query_language      = "kql"
+  query               = "event.dataset:\"netskope.events\""
+  time_field          = "@timestamp"
+  field_map           = local.security_field_map
+  stale_after_seconds = 604800
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "proofpoint" {
-  name                 = "proofpoint"
-  source               = "proofpoint"
-  mode                 = "elastic"
-  elastic_url          = "https://elasticsearch.example.invalid"
-  elastic_api_key      = var.elastic_api_key
-  index_pattern        = "logs-proofpoint.endpoint-*"
-  query_language       = "kql"
-  query                = "event.dataset:\"proofpoint.endpoint\""
-  time_field           = "@timestamp"
-  field_map            = local.security_field_map
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "proofpoint"
+  source              = "proofpoint"
+  mode                = "elastic"
+  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_api_key     = var.elastic_api_key
+  index_pattern       = "logs-proofpoint.endpoint-*"
+  query_language      = "kql"
+  query               = "event.dataset:\"proofpoint.endpoint\""
+  time_field          = "@timestamp"
+  field_map           = local.security_field_map
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
 }
 
 resource "missioncontrol_source_connector" "blastshield" {
-  name                 = "blastshield"
-  source               = "blastshield"
-  mode                 = "elastic"
-  elastic_url          = "https://elasticsearch.example.invalid"
-  elastic_api_key      = var.elastic_api_key
-  index_pattern        = "logs-blastshield.agent-*"
-  query_language       = "kql"
-  query                = "event.dataset:\"blastshield.agent\""
-  time_field           = "@timestamp"
-  field_map            = local.security_field_map
-  stale_after_seconds  = 86400
-  interval_seconds     = 86400
+  name                = "blastshield"
+  source              = "blastshield"
+  mode                = "elastic"
+  elastic_url         = "https://elasticsearch.example.invalid"
+  elastic_api_key     = var.elastic_api_key
+  index_pattern       = "logs-blastshield.agent-*"
+  query_language      = "kql"
+  query               = "event.dataset:\"blastshield.agent\""
+  time_field          = "@timestamp"
+  field_map           = local.security_field_map
+  stale_after_seconds = 86400
+  interval_seconds    = 86400
+}
+
+resource "missioncontrol_log_view" "endpoint" {
+  name           = "Endpoint logs"
+  description    = "Munki, AutoPkg, osquery, and Falcon, merged into one timeline for a single Mac."
+  default_window = "1h"
+  max_lines      = 5000
+  device_scoped  = true
+  time_zone      = "UTC"
+  connector_id   = missioncontrol_source_connector.rapid7.id
+
+  source {
+    label           = "Munki"
+    color           = "#ff9f0a"
+    index_pattern   = "logs-munki.install-*"
+    kql             = "host.name: {{hostname}} or host.serial: {{serial}}"
+    message_field   = "message"
+    timestamp_field = "@timestamp"
+    file_field      = "log.file.path"
+    host_field      = "host.name"
+    sequence_field  = "log.file.offset"
+  }
+
+  source {
+    label           = "AutoPkg"
+    color           = "#ffd60a"
+    index_pattern   = "logs-autopkg.run-*"
+    kql             = "host.name: {{hostname}}"
+    message_field   = "message"
+    timestamp_field = "@timestamp"
+    file_field      = "log.file.path"
+    host_field      = "host.name"
+    sequence_field  = "log.file.offset"
+  }
+
+  source {
+    label           = "osquery"
+    color           = "#5e5ce6"
+    index_pattern   = "logs-osquery.result-*"
+    kql             = "host.name: {{hostname}} or host.uuid: {{hardware_uuid}}"
+    message_field   = "message"
+    timestamp_field = "@timestamp"
+    file_field      = "log.file.path"
+    host_field      = "host.name"
+    sequence_field  = "log.file.offset"
+  }
+
+  source {
+    label           = "Falcon"
+    color           = "#0a84ff"
+    index_pattern   = "logs-crowdstrike.falcon-*"
+    kql             = "host.name: {{hostname}}"
+    message_field   = "message"
+    timestamp_field = "@timestamp"
+    file_field      = "log.file.path"
+    host_field      = "host.name"
+    sequence_field  = "log.file.offset"
+  }
+}
+
+resource "missioncontrol_log_view" "autopkg" {
+  name            = "AutoPKG run log"
+  description     = "Recipe runs on the Mac mini pool."
+  default_window  = "24h"
+  max_lines       = 5000
+  device_scoped   = false
+  time_zone       = "UTC"
+  elastic_url     = "https://elasticsearch.example.invalid"
+  elastic_api_key = var.elastic_api_key
+
+  source {
+    label           = "AutoPkg"
+    color           = "#ffd60a"
+    index_pattern   = "logs-autopkg.run-*"
+    kql             = "event.dataset: \"autopkg\""
+    message_field   = "message"
+    timestamp_field = "@timestamp"
+    file_field      = "log.file.path"
+    host_field      = "host.name"
+    sequence_field  = "log.file.offset"
+  }
+}
+
+data "missioncontrol_log_view" "endpoint" {
+  id = missioncontrol_log_view.endpoint.id
 }
 
 resource "missioncontrol_osquery_pack" "endpoint" {

@@ -429,6 +429,11 @@ func TestTerraformProviderCRUD(t *testing.T) {
 		}
 	}
 
+	views := apiGet(t, ts.URL, "/api/v1/log-views")
+	if !strings.Contains(views, "Endpoint logs") || !strings.Contains(views, "AutoPKG run log") || strings.Contains(views, "example-elastic-api-key") {
+		t.Fatalf("log views: %s", views)
+	}
+
 	run("destroy", "-auto-approve", "-input=false",
 		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
 		"-var", "max_concurrency=4", "-var", "soak_days=3")
@@ -444,6 +449,10 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	}
 	if strings.Contains(apiGet(t, ts.URL, "/api/v1/osquery/queries"), "launch_daemons") {
 		t.Fatal("osquery query survived destroy")
+	}
+	viewsLeft := apiGet(t, ts.URL, "/api/v1/log-views")
+	if strings.Contains(viewsLeft, "Endpoint logs") || strings.Contains(viewsLeft, "AutoPKG run log") {
+		t.Fatalf("log views survived destroy: %s", viewsLeft)
 	}
 	settings = apiGet(t, ts.URL, "/api/v1/pipeline-settings")
 	if !strings.Contains(settings, `"max_concurrency":4`) && !strings.Contains(settings, `"max_concurrency": 4`) {

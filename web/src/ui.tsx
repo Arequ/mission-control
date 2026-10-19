@@ -52,6 +52,7 @@ function section(path: string) {
   if (path.startsWith("/coverage")) return "coverage";
   if (path.startsWith("/devices")) return "devices";
   if (path.startsWith("/queries")) return "queries";
+  if (path.startsWith("/logs")) return "logs";
   if (path.startsWith("/autopkg") || path.startsWith("/runs") || path.startsWith("/runners")) return "autopkg";
   return "overview";
 }
@@ -63,7 +64,7 @@ export function Layout() {
   const active = section(pathname);
   const [y, setY] = useState(0);
   const [ready, setReady] = useState(false);
-  const [counts, setCounts] = useState({ recipes: 0, packages: 0, devices: 0 });
+  const [counts, setCounts] = useState({ recipes: 0, packages: 0, devices: 0, logs: 0 });
   const [apiOk, setApiOk] = useState(true);
 
   useLayoutEffect(() => {
@@ -91,6 +92,7 @@ export function Layout() {
       api.recipes().then((recipes) => { if (!stop) setCounts((c) => ({ ...c, recipes: recipes.recipes.length })); }).catch(() => {});
       api.packages().then((packages) => { if (!stop) setCounts((c) => ({ ...c, packages: packages.packages.length })); }).catch(() => {});
       api.summary().then((summary) => { if (!stop) setCounts((c) => ({ ...c, devices: summary.total_devices })); }).catch(() => {});
+      api.logViews().then((views) => { if (!stop) setCounts((c) => ({ ...c, logs: views.views.length })); }).catch(() => {});
     };
     load();
     const t = setInterval(load, 8000);
@@ -113,7 +115,7 @@ export function Layout() {
             <input
               value={q}
               onChange={(event) => setQ(event.target.value)}
-              placeholder="Search devices, software, recipes…"
+              placeholder="Search devices, software, logs…"
               aria-label="Search"
             />
             {q ? <button className="kbd" type="button" onClick={() => setQ("")} aria-label="Clear search">Clear</button> : null}
@@ -138,6 +140,7 @@ export function Layout() {
           <SideLink id="overview" to="/" icon="layout" label="Overview" active={active === "overview"} end />
           <SideLink id="devices" to="/devices" icon="laptop" label="Devices" count={counts.devices ? String(counts.devices) : ""} active={active === "devices"} />
           <SideLink id="queries" to="/queries" icon="terminal" label="Queries" active={active === "queries"} />
+          <SideLink id="logs" to="/logs" icon="logs" label="Logs" count={counts.logs ? String(counts.logs) : ""} active={active === "logs"} />
           <div className="side-h" style={{ marginTop: 14 }}>Security</div>
           <SideLink id="coverage" to="/coverage" icon="shield" label="Security Coverage" active={active === "coverage"} />
           <div className="side-h" style={{ marginTop: 14 }}>Software</div>
@@ -222,6 +225,16 @@ function Segment({ items }: { items: { to: string; label: string; on: (path: str
 
 export function Managed({ small }: { small?: boolean }) {
   return <span className={`tf${small ? " sm" : ""}`}><Icon name="lock" size={11} />Managed by Terraform</span>;
+}
+
+export const CONFIG_REPO = "https://github.com/Arequ/terraform-mission-control";
+
+export function ProposeChange() {
+  return (
+    <a className="capsule" href={CONFIG_REPO} target="_blank" rel="noreferrer">
+      Propose change
+    </a>
+  );
 }
 
 const tone: Record<string, { kind: string; icon?: IconName; live?: boolean }> = {
