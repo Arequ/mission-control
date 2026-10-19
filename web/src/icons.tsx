@@ -15,7 +15,10 @@ export type IconName =
   | "alert"
   | "x"
   | "rocket"
-  | "orbit";
+  | "orbit"
+  | "laptop"
+  | "layout"
+  | "terminal";
 
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const p: SVGProps<SVGSVGElement> = {
@@ -137,6 +140,29 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
           <circle cx="12" cy="12" r="3" />
           <path d="M12 3a9 9 0 1 0 9 9" />
           <path d="M19 3v4h-4" />
+        </svg>
+      );
+    case "laptop":
+      return (
+        <svg {...p}>
+          <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5V15H4z" />
+          <path d="M2 18h20" />
+          <path d="M8 18a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2" />
+        </svg>
+      );
+    case "layout":
+      return (
+        <svg {...p}>
+          <rect width="18" height="18" x="3" y="3" rx="2" />
+          <path d="M3 9h18M9 21V9" />
+        </svg>
+      );
+    case "terminal":
+      return (
+        <svg {...p}>
+          <rect width="18" height="14" x="3" y="5" rx="2" />
+          <path d="m7 10 3 2.5L7 15" />
+          <path d="M12 15h5" />
         </svg>
       );
   }

@@ -9,8 +9,13 @@ info:
     addition to a token with config:write. Runners call the lease, log,
     artifact, and complete endpoints with a runner token and the lease attempt.
     Munki clients fetch catalogs, manifests, and packages under /repo.
-    Job and audit lists accept limit (default 100, max 500) and offset, and
-    return total.
+    osqueryd uses the TLS remote API at /enroll, /config, /logger,
+    /distributed_read, and /distributed_write. Those routes authenticate with
+    an enroll secret or a node key, not an API token.
+    Job, audit, device, and result lists accept limit (default 100, max 500)
+    and offset, and return total.
+    Scopes include osquery:read and osquery:write. Live queries and node
+    invalidation are operational and do not require the Terraform client header.
 servers:
   - url: /
 security:
@@ -20,6 +25,7 @@ tags:
   - name: jobs
   - name: runners
   - name: munki
+  - name: osquery
   - name: meta
 paths:
   /healthz:
@@ -627,6 +633,236 @@ paths:
           schema: { type: string }
       responses:
         "200": { description: package }
+  /api/v1/osquery/queries:
+    get:
+      tags: [osquery]
+      summary: List Terraform-managed osquery queries
+      responses:
+        "200": { description: list }
+    post:
+      tags: [osquery]
+      summary: Create a query. Requires the Terraform client header.
+      responses:
+        "201": { description: created }
+        "400": { description: invalid }
+        "403": { description: not the Terraform client }
+  /api/v1/osquery/queries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Get a query
+      responses:
+        "200": { description: query }
+        "404": { description: not found }
+    put:
+      tags: [osquery]
+      summary: Update a query. Requires the Terraform client header.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [osquery]
+      summary: Delete a query. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/osquery/packs:
+    get:
+      tags: [osquery]
+      summary: List query packs
+      responses:
+        "200": { description: list }
+    post:
+      tags: [osquery]
+      summary: Create a pack. Requires the Terraform client header.
+      responses:
+        "201": { description: created }
+  /api/v1/osquery/packs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Get a pack
+      responses:
+        "200": { description: pack }
+    put:
+      tags: [osquery]
+      summary: Update a pack. Requires the Terraform client header.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [osquery]
+      summary: Delete a pack. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/osquery/labels:
+    get:
+      tags: [osquery]
+      summary: List dynamic and manual labels
+      responses:
+        "200": { description: list }
+    post:
+      tags: [osquery]
+      summary: Create a label. Requires the Terraform client header.
+      responses:
+        "201": { description: created }
+  /api/v1/osquery/labels/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Get a label
+      responses:
+        "200": { description: label }
+    put:
+      tags: [osquery]
+      summary: Update a label. Requires the Terraform client header.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [osquery]
+      summary: Delete a label. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/osquery/enroll-secrets:
+    get:
+      tags: [osquery]
+      summary: List enroll secrets. The secret value is never returned.
+      responses:
+        "200": { description: list }
+    post:
+      tags: [osquery]
+      summary: Create an enroll secret. Requires the Terraform client header.
+      responses:
+        "201": { description: created }
+  /api/v1/osquery/enroll-secrets/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Get an enroll secret record
+      responses:
+        "200": { description: secret metadata }
+    put:
+      tags: [osquery]
+      summary: Rotate or disable an enroll secret. Requires the Terraform client header.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [osquery]
+      summary: Delete an enroll secret. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/fleet/summary:
+    get:
+      tags: [osquery]
+      summary: Fleet KPIs, macOS version distribution, and AutoPKG status
+      responses:
+        "200": { description: summary }
+  /api/v1/devices:
+    get:
+      tags: [osquery]
+      summary: List devices
+      parameters:
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: platform, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [online, offline] } }
+        - { in: query, name: label, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer } }
+        - { in: query, name: offset, schema: { type: integer } }
+      responses:
+        "200": { description: page }
+  /api/v1/devices/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Device detail, installed apps, labels, and recent change events
+      responses:
+        "200": { description: device }
+        "404": { description: not found }
+  /api/v1/devices/{id}/results:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Paginated raw result logs for a device
+      parameters:
+        - { in: query, name: query, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer } }
+        - { in: query, name: offset, schema: { type: integer } }
+      responses:
+        "200": { description: page }
+  /api/v1/devices/{id}/invalidate:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    post:
+      tags: [osquery]
+      summary: Invalidate the node key so osquery re-enrolls. Requires osquery:write.
+      responses:
+        "200": { description: device }
+  /api/v1/live-queries:
+    post:
+      tags: [osquery]
+      summary: Run SQL on devices or labels through osquery distributed queries. Requires osquery:write.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sql]
+              properties:
+                sql: { type: string }
+                device_ids: { type: array, items: { type: string } }
+                labels: { type: array, items: { type: string } }
+                timeout_seconds: { type: integer }
+      responses:
+        "201": { description: live query }
+        "400": { description: invalid sql or empty target }
+  /api/v1/live-queries/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Live query status and rows received so far
+      responses:
+        "200": { description: live query }
+  /enroll:
+    post:
+      tags: [osquery]
+      security: []
+      summary: osquery TLS enroll. Matches an existing device by hardware UUID, then serial.
+      responses:
+        "200": { description: node_key }
+        "401": { description: enroll secret rejected }
+  /config:
+    post:
+      tags: [osquery]
+      security: []
+      summary: osquery TLS config. Includes inventory queries, label queries, and packs the node is in.
+      responses:
+        "200": { description: config or node_invalid }
+  /logger:
+    post:
+      tags: [osquery]
+      security: []
+      summary: osquery TLS logger for status and result logs
+      responses:
+        "200": { description: accepted or node_invalid }
+  /distributed_read:
+    post:
+      tags: [osquery]
+      security: []
+      summary: osquery distributed read. Returns pending live queries for the node.
+      responses:
+        "200": { description: queries or node_invalid }
+  /distributed_write:
+    post:
+      tags: [osquery]
+      security: []
+      summary: osquery distributed write. Stores live query results.
+      responses:
+        "200": { description: accepted or node_invalid }
 components:
   securitySchemes:
     bearerAuth:

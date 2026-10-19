@@ -1,6 +1,6 @@
 # Architecture
 
-Mission Control is an API-first service for a Mac fleet. This repository currently implements the Munki and AutoPkg slice. Later slices (osquery, a unified device view, log search, vulnerability correlation) sit on the same API and the same GitOps flow. They are not built yet.
+Mission Control is an API-first service for a Mac fleet. This repository implements the Munki, AutoPkg, and osquery inventory slices. Later slices (a unified device view, log search, vulnerability correlation) sit on the same API and the same GitOps flow.
 
 ## Principles
 
@@ -48,7 +48,7 @@ Runners never accept connections. A dead runner is detected when its lease expir
 
 ## Auth
 
-API tokens are random, stored as SHA-256, and carry scopes (`config:read`, `config:write`, `jobs:read`, `jobs:write`, `runners:read`, `munki:read`, `munki:write`, `audit:read`, `admin`, or `*`). A write scope implies the matching read. `MC_ADMIN_TOKEN` is upserted at startup as the `admin` token with scope `*`. The compose file uses obvious local values; production supplies these from a Kubernetes secret and does not commit them.
+API tokens are random, stored as SHA-256, and carry scopes (`config:read`, `config:write`, `jobs:read`, `jobs:write`, `runners:read`, `munki:read`, `munki:write`, `osquery:read`, `osquery:write`, `audit:read`, `admin`, or `*`). A write scope implies the matching read. `MC_ADMIN_TOKEN` is upserted at startup as the `admin` token with scope `*`. The compose file uses obvious local values; production supplies these from a Kubernetes secret and does not commit them.
 
 Runners register with `MC_BOOTSTRAP_TOKEN` and receive a one-time runner token (`mcr_…`). That token is the only credential on the lease, log, renew, artifact, and complete routes.
 
@@ -94,6 +94,32 @@ Manifests are config resources (catalogs, included manifests, managed and option
 
 The example manifest `testing` lists both the `testing` and `production` catalogs, which is the usual way a pilot group sees soaking items and already-promoted items together. `site_default` lists only `production`.
 
+## Osquery
+
+osqueryd talks to the standard TLS remote API. The process itself speaks HTTP, the same way Munki does; TLS terminates at the ingress. The paths are the historical osquery defaults. osquery 5 compiles those endpoint flags as empty, so a host sets them explicitly along with `--tls_hostname`, `--enroll_secret_path`, `--config_plugin=tls`, `--logger_plugin=tls`, and `--distributed_plugin=tls`:
+
+- `POST /enroll`
+- `POST /config`
+- `POST /logger` (status and result)
+- `POST /distributed_read`
+- `POST /distributed_write`
+
+A bad node key returns HTTP 200 with `{"node_invalid": true}`. osquery re-enrolls on that response. The previous key hash stays in the row so the server can tell an invalidated key from an unknown one.
+
+Enroll secrets are Terraform resources. The API stores SHA-256 and never returns the raw secret. More than one secret can be enabled, which is how a rotation overlaps. Node keys are 32 random bytes, hex-encoded, and stored as SHA-256.
+
+A device is matched by hardware UUID, then by serial. Re-enrollment keeps the same device id. If the UUID and the serial point at two different rows, the UUID wins and the serial is left on the other row.
+
+Built-in inventory queries are always on the schedule. Their names start with `mc_` and cannot be used by Terraform. The interval is `MC_INVENTORY_INTERVAL` (default 5 minutes). They are snapshots: `system_info`, `os_version`, platform info, interface addresses, logged-in user, macOS apps, disk encryption, and uptime. The latest rows are stored raw, and a normalized device record is updated from them. The first apps snapshot is a baseline. Later snapshots write audit events: OS version, hostname, user, disk encryption, and app installed, updated, or removed.
+
+Dynamic labels are snapshot queries named `mc_label_<name>`. A non-empty result means the host is a member. Manual labels are serials or device ids. A pack is included when it is enabled and the host is in any of its labels. A pack with no labels applies to every host. Platform, shard, and discovery are passed through for osquery to filter. A pack interval overrides the query interval; otherwise each query keeps its own interval, snapshot, and differential settings. Queries with `scheduled` also go on the global schedule.
+
+Live queries are operational, not config. `POST /api/v1/live-queries` needs `osquery:write` and an explicit set of device ids or label names (at most 2000). Distributed read hands the SQL to those hosts and distributed write stores the rows. The UI polls. Targets that are still pending when `timeout_seconds` elapses become `timeout`. osquery does not poll distributed read unless it was started with `--disable_distributed=false`. The config document also sets that option, but the runner is started before the first config arrives.
+
+Result logs are inserted in batches. `MC_ELASTIC_URL` optionally forwards the same rows to Elasticsearch `_bulk` (`MC_ELASTIC_INDEX`, `MC_ELASTIC_API_KEY`). Postgres stays the source of record. A forwarder error is logged and the agent still gets HTTP 200. An empty URL uses a no-op forwarder.
+
+`MC_DEV_SEED=1` loads about forty fake Macs, the local enroll secret `mc_dev_enroll_secret`, and the same query, pack, and label names as `examples/terraform`. Those names collide if you apply the example stack onto a seeded database. Use a fresh database for `terraform apply`, the same way the provider test does.
+
 ## Terraform provider
 
 `terraform-provider-missioncontrol` is a terraform-plugin-framework provider. Resources:
@@ -107,12 +133,16 @@ The example manifest `testing` lists both the `testing` and `production` catalog
 | `missioncontrol_promotion_rule` | `/api/v1/promotion-rules` |
 | `missioncontrol_runner_pool` | `/api/v1/runner-pools` |
 | `missioncontrol_manifest` | `/api/v1/manifests` |
+| `missioncontrol_osquery_query` | `/api/v1/osquery/queries` |
+| `missioncontrol_osquery_pack` | `/api/v1/osquery/packs` |
+| `missioncontrol_osquery_label` | `/api/v1/osquery/labels` |
+| `missioncontrol_osquery_enroll_secret` | `/api/v1/osquery/enroll-secrets` |
 
-`examples/terraform` is a realistic slice of what will live in the config repo: a Mac mini pool, the public AutoPkg recipes repo, a Firefox override with trust info, a morning schedule, fleet limits, a 7-day promotion, and two manifests. It is applied with a dev override (`make tf-dev`), not the Terraform registry.
+`examples/terraform` is a realistic slice of what will live in the config repo: a Mac mini pool, the public AutoPkg recipes repo, a Firefox override with trust info, a morning schedule, fleet limits, a 7-day promotion, two manifests, an enroll secret, an Apple silicon label, a manual canary label, a launch-daemon query, and a pack scoped to that label. It is applied with a dev override (`make tf-dev`), not the Terraform registry. The enroll secret in that example is a local placeholder.
 
 ## UI
 
-The UI is a Vite, React, and TypeScript app with no component library. The server serves `web/dist` from the same origin. Pages are Recipes, Runs, Run detail (plain log), Runners, Catalogs, Manifests, and Settings. Config shows a violet Managed by Terraform badge and is not editable. Run now is the only mutation. Visual tokens (type, color, radii, frosted shell, cards, pills) follow the approved mockups. Motion is CSS on `transform` and `opacity` only: page enter, staggered rows, a sliding sidebar indicator, soak bars via `scaleX`, and a View Transitions crossfade for light and dark. `prefers-reduced-motion` disables it.
+The UI is a Vite, React, and TypeScript app with no component library. The server serves `web/dist` from the same origin. Fleet pages are Overview (device count, online, macOS distribution, a small AutoPKG status), Devices, device detail (hardware header, then Overview, Software, and a live query), and Queries (Terraform packs and queries, plus Live query). Software pages are still Recipes, Runs, Run detail, Runners, Catalogs, and Manifests, plus Settings. Config shows a violet Managed by Terraform badge and is not editable. Run now and live query are the operational mutations. The fleet pages are intentionally sparse compared with the original mockups. Visual tokens (type, color, radii, frosted shell, cards, pills) follow those mockups. Motion is CSS on `transform` and `opacity` only: page enter, staggered rows, a sliding sidebar indicator, bars via `scaleX`, and a View Transitions crossfade for light and dark. `prefers-reduced-motion` disables it.
 
 ## Kubernetes
 
@@ -120,7 +150,7 @@ The UI is a Vite, React, and TypeScript app with no component library. The serve
 
 ## What is real, and what is stubbed
 
-Real in this slice: token auth, audit log, config CRUD, cron scheduling, concurrency and per-runner limits, lease expiry and retry, fake and interface-compatible autopkg execution, log streaming, catalog generation, soak promotion, manual promote, Munki repo serving, the Terraform provider, and the UI.
+Real in this slice: token auth, audit log, config CRUD, cron scheduling, concurrency and per-runner limits, lease expiry and retry, fake and interface-compatible autopkg execution, log streaming, catalog generation, soak promotion, manual promote, Munki repo serving, the osquery TLS API, inventory and change events, label membership, live queries, the Terraform provider, and the UI.
 
 Stubbed or deliberately thin:
 
@@ -128,11 +158,11 @@ Stubbed or deliberately thin:
 - The fake executor reads `NAME` and `VERSION` out of the override. It does not download vendor packages.
 - S3 is implemented, but local dev and tests use the disk backend.
 - There is no in-cluster leader election. The scheduler is safe to run on multiple replicas because enqueue collapses duplicates and leasing uses row locks, but two replicas will both attempt promotion. Promotion is idempotent given the catalog check.
-- No osquery, device inventory, Elastic log viewer, vulnerability correlation, CrowdStrike, Rapid7, Netskope, Proofpoint, BlastShield, or Kolide integration yet.
+- Elasticsearch forwarding is a real `_bulk` client behind an interface. It runs only when `MC_ELASTIC_URL` is set, and there is no log search page. Kibana remains the place to read those indexes.
+- The osquery TLS routes are HTTP. Terminate TLS in front of the process. A real `osqueryd` test in this repo does that with an in-process certificate when the binary is installed.
+- No vulnerability correlation, CrowdStrike, Rapid7, Netskope, Proofpoint, BlastShield, or Kolide integration yet.
 
 ## Roadmap
-
-**Osquery.** An enroll endpoint and a node key, plus a scheduled query pack delivered on the same outbound style as `mc-runner` (or a small osquery extension that posts results). Results land in Postgres first; high-volume tables can move to the log store later. Devices become a first-class resource keyed by serial number.
 
 **Unified device view.** One device record that joins osquery with read-only pulls from CrowdStrike, Rapid7, Netskope, Proofpoint, BlastShield, and Kolide. Those pulls are connectors with tokens supplied by Terraform, not typed into the UI. The API returns one device with a `sources` array and a freshness timestamp per source. Missing sources stay empty rather than blocking the page.
 
