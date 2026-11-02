@@ -208,6 +208,11 @@ func (s *Store) GetDevice(ctx context.Context, id string, offline time.Duration)
 	if err := ev.Err(); err != nil {
 		return model.Device{}, err
 	}
+	cov, err := s.DeviceCoverageCount(ctx, id)
+	if err != nil {
+		return model.Device{}, err
+	}
+	d.Coverage = &cov
 	presentDevice(&d.Device, offline, s.now())
 	return d.Device, nil
 }

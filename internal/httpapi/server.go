@@ -95,6 +95,9 @@ func (s *Server) Tick(ctx context.Context) error {
 	if err := s.store.ExpireLiveQueries(ctx); err != nil {
 		return err
 	}
+	if err := s.store.SyncDueConnectors(ctx); err != nil {
+		return err
+	}
 	if s.logRetention > 0 {
 		if _, err := s.store.PurgeOsqueryLogs(ctx, s.logRetention); err != nil {
 			return err
@@ -182,6 +185,16 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/osquery/enroll-secrets/{id}", s.withAPI("config:read", http.HandlerFunc(s.getEnrollSecret)))
 	mux.Handle("PUT /api/v1/osquery/enroll-secrets/{id}", s.withConfigWrite(http.HandlerFunc(s.updateEnrollSecret)))
 	mux.Handle("DELETE /api/v1/osquery/enroll-secrets/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteEnrollSecret)))
+
+	mux.Handle("GET /api/v1/source-connectors", s.withAPI("config:read", http.HandlerFunc(s.listConnectors)))
+	mux.Handle("POST /api/v1/source-connectors", s.withConfigWrite(http.HandlerFunc(s.createConnector)))
+	mux.Handle("GET /api/v1/source-connectors/{id}", s.withAPI("config:read", http.HandlerFunc(s.getConnector)))
+	mux.Handle("PUT /api/v1/source-connectors/{id}", s.withConfigWrite(http.HandlerFunc(s.updateConnector)))
+	mux.Handle("DELETE /api/v1/source-connectors/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteConnector)))
+
+	mux.Handle("GET /api/v1/coverage/matrix", s.withAPI("osquery:read", http.HandlerFunc(s.coverageMatrix)))
+	mux.Handle("GET /api/v1/coverage/devices/{id}", s.withAPI("osquery:read", http.HandlerFunc(s.coverageDevice)))
+	mux.Handle("GET /api/v1/coverage/connectors", s.withAPI("osquery:read", http.HandlerFunc(s.coverageConnectors)))
 
 	mux.Handle("GET /api/v1/fleet/summary", s.withAPI("osquery:read", http.HandlerFunc(s.fleetSummary)))
 	mux.Handle("GET /api/v1/devices", s.withAPI("osquery:read", http.HandlerFunc(s.listDevices)))

@@ -16,6 +16,9 @@ info:
     and offset, and return total.
     Scopes include osquery:read and osquery:write. Live queries and node
     invalidation are operational and do not require the Terraform client header.
+    Coverage reads use osquery:read. Source connectors are configuration:
+    writes require config:write and the Terraform client header. Connector
+    credentials are write-only and are never returned.
 servers:
   - url: /
 security:
@@ -734,6 +737,63 @@ paths:
       summary: Create an enroll secret. Requires the Terraform client header.
       responses:
         "201": { description: created }
+  /api/v1/source-connectors:
+    get:
+      tags: [config]
+      summary: List source connectors. Credentials are never returned.
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a source connector. Requires the Terraform client header. Credentials are write-only.
+      responses:
+        "201": { description: created }
+  /api/v1/source-connectors/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a source connector. Credentials are never returned.
+      responses:
+        "200": { description: connector }
+    put:
+      tags: [config]
+      summary: Update a source connector. Requires the Terraform client header. An empty credential keeps the stored value.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a source connector. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/coverage/matrix:
+    get:
+      tags: [osquery]
+      summary: Coverage matrix. filter is all, gaps, missing, single, ghost, or stale. source names the missing tool. stale_days defaults to 7.
+      parameters:
+        - { name: filter, in: query, schema: { type: string } }
+        - { name: source, in: query, schema: { type: string } }
+        - { name: stale_days, in: query, schema: { type: integer } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+        - { name: offset, in: query, schema: { type: integer } }
+      responses:
+        "200": { description: matrix }
+  /api/v1/coverage/devices/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [osquery]
+      summary: Per-device coverage pane, including ghosts addressed by their coverage id.
+      responses:
+        "200": { description: coverage }
+        "404": { description: not found }
+  /api/v1/coverage/connectors:
+    get:
+      tags: [osquery]
+      summary: Connector health. Credentials are not included.
+      responses:
+        "200": { description: health }
   /api/v1/osquery/enroll-secrets/{id}:
     parameters:
       - $ref: "#/components/parameters/id"

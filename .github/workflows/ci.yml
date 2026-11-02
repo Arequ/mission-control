@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: missioncontrol
+          POSTGRES_PASSWORD: missioncontrol
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U missioncontrol -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_ADMIN: postgres://missioncontrol:missioncontrol@127.0.0.1:5432/postgres?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.2"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.6"
+      - name: Go vet and test
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: Provider vet and test
+        working-directory: terraform-provider-missioncontrol
+        run: |
+          go vet ./...
+          go test -race ./...
+      - name: Web build
+        working-directory: web
+        run: npm ci && npm run build

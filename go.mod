@@ -1,6 +1,6 @@
 module github.com/Arequ/mission-control
 
-go 1.22
+go 1.27.2
 
 require (
 	github.com/google/uuid v1.6.0

@@ -2,7 +2,7 @@
 
 API-first Munki, AutoPkg, and osquery inventory for a Mac fleet. The server is a stateless Go service on Postgres. Configuration is applied by Terraform, not edited in the UI. AutoPkg runs on Macs through `mc-runner`, which only makes outbound calls. osqueryd uses the TLS remote API.
 
-The broader system (a unified device view, logs, vulnerabilities) is described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Security Coverage joins osquery, Munki, and six security tools into one matrix. Logs and vulnerabilities are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Quickstart
 
@@ -22,7 +22,7 @@ export TF_CLI_CONFIG_FILE="$PWD/bin/dev.tfrc"
 terraform -chdir=examples/terraform apply -auto-approve
 ```
 
-That creates a runner pool, the AutoPkg recipe repo, a Firefox override, a 06:15 schedule, fleet pipeline limits, a 7-day promotion from `testing` to `production`, two Munki manifests, an osquery enroll secret, labels, a query, and a pack. Dev overrides skip the Terraform registry, so you do not need `terraform init`.
+That creates a runner pool, the AutoPkg recipe repo, a Firefox override, a 06:15 schedule, fleet pipeline limits, a 7-day promotion from `testing` to `production`, two Munki manifests, an osquery enroll secret, labels, a query, a pack, and a connector for each coverage source. Dev overrides skip the Terraform registry, so you do not need `terraform init`. Connector credentials in the example are placeholders (`example-crowdstrike-client-secret`, `example-kolide-api-token`, `example-elastic-api-key`).
 
 Apply the example stack to a database that was not seeded. `MC_DEV_SEED=1` already inserts resources with those names, including the local enroll secret `mc_dev_enroll_secret`. The example variable `enroll_secret` defaults to `example-enroll-secret`. Both values are local placeholders.
 
@@ -75,7 +75,7 @@ osqueryd \
 
 `--disable_distributed=false` is required. osquery leaves distributed queries off unless that flag is set at startup.
 
-With the dev seed, the enroll secret file contains `mc_dev_enroll_secret`. A seeded fleet of about forty Macs is already in the UI. A host that enrolls for real shows up next to them. Packs and labels from Terraform are delivered on `POST /config`. Live queries from the UI are delivered on the distributed read/write endpoints.
+With the dev seed, the enroll secret file contains `mc_dev_enroll_secret`. A seeded fleet of about forty Macs is already in the UI, plus ghost and conflicting records in Security Coverage. A host that enrolls for real shows up next to them. Packs and labels from Terraform are delivered on `POST /config`. Live queries from the UI are delivered on the distributed read/write endpoints. The seed also inserts placeholder connector credentials (`mc_dev_crowdstrike_credential` and the same pattern for the other sources). The API never returns them.
 
 `docker compose --profile runner up --build` also starts a fake runner on the compose network. It idles until a recipe and a job exist.
 
