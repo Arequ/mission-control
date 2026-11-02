@@ -112,7 +112,10 @@ func (s *Store) SeedDemo(ctx context.Context) error {
 	pkgs := []pkgSpec{
 		{"Chrome", "131.0.6778.139", "testing", 3 * 24 * time.Hour, 0},
 		{"Firefox", "132.0.2", "testing", 24 * time.Hour, 0},
-		{"Zoom", "6.2.10", "testing", (6*24 + 12) * time.Hour, 0},
+		// 6.0.2 is still behind CVE-2024-42439 (fixed in 6.1.0), so the issue's
+		// action is to run the Zoom recipe. Chrome and Firefox are already at
+		// a version that clears, and their action is a promotion pull request.
+		{"Zoom", "6.0.2", "testing", (6*24 + 12) * time.Hour, 0},
 		{"Slack", "4.41.96", "testing", 2 * 24 * time.Hour, 0},
 		{"OnePassword", "8.10.56", "testing", 4 * 24 * time.Hour, 0},
 		{"GoogleDrive", "96.0", "testing", 5 * 24 * time.Hour, 0},

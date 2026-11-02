@@ -289,6 +289,16 @@ data "missioncontrol_log_view" "endpoint" {
   id = missioncontrol_log_view.endpoint.id
 }
 
+resource "missioncontrol_vulnerability_settings" "feeds" {
+  nvd_api_key = var.nvd_api_key
+
+  cpe_override {
+    bundle_id = "com.acme.Browser"
+    vendor    = "acme"
+    product   = "browser"
+  }
+}
+
 resource "missioncontrol_osquery_pack" "endpoint" {
   name        = "endpoint"
   description = "Endpoint checks for Apple silicon Macs"

@@ -150,7 +150,7 @@ func (s *Store) GetDevice(ctx context.Context, id string, offline time.Duration)
 	if err != nil {
 		return model.Device{}, notFound(err)
 	}
-	apps, err := s.pool.Query(ctx, `SELECT name, path, bundle_id, version FROM device_apps WHERE device_id=$1 ORDER BY lower(name), path`, id)
+	apps, err := s.pool.Query(ctx, `SELECT name, path, bundle_id, version, bundle_version FROM device_apps WHERE device_id=$1 ORDER BY lower(name), path`, id)
 	if err != nil {
 		return model.Device{}, err
 	}
@@ -158,7 +158,7 @@ func (s *Store) GetDevice(ctx context.Context, id string, offline time.Duration)
 	d.Apps = []model.DeviceApp{}
 	for apps.Next() {
 		var a model.DeviceApp
-		if err := apps.Scan(&a.Name, &a.Path, &a.BundleID, &a.Version); err != nil {
+		if err := apps.Scan(&a.Name, &a.Path, &a.BundleID, &a.Version, &a.BundleVersion); err != nil {
 			return model.Device{}, err
 		}
 		d.Apps = append(d.Apps, a)

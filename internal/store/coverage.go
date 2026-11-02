@@ -15,6 +15,7 @@ var fieldMapKeys = map[string]bool{
 	"native_id": true, "serial": true, "hardware_uuid": true, "mac": true,
 	"hostname": true, "primary_user": true, "os_version": true, "ip_address": true,
 	"agent_version": true, "last_seen": true,
+	"cve": true, "software": true, "version": true,
 }
 
 type storedConnector struct {

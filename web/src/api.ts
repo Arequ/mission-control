@@ -339,6 +339,99 @@ export type LogQuery = {
   align?: string;
 };
 
+export type IssueFix = {
+  action: string;
+  fixed_version?: string;
+  fixed_build?: string;
+  catalog?: string;
+  catalog_version?: string;
+  recipe_id?: string;
+  recipe_name?: string;
+  recipe_status?: string;
+  required_os?: string;
+  pr_url?: string;
+  pr_title?: string;
+  pr_body?: string;
+};
+
+export type VulnerabilityIssue = {
+  id: string;
+  cve_id: string;
+  software_key: string;
+  software_name: string;
+  status: string;
+  assignee: string;
+  notes: string;
+  risk_until?: string;
+  opened_at: string;
+  updated_at: string;
+  resolved_at?: string;
+  auto_resolved: boolean;
+  revision: number;
+  description: string;
+  cvss_score: number;
+  cvss_vector: string;
+  severity: string;
+  kev: boolean;
+  kev_name?: string;
+  epss: number;
+  epss_percentile: number;
+  epss_known: boolean;
+  source: string;
+  device_count: number;
+  sla_days: number;
+  sla_due: string;
+  within_sla: boolean;
+  fix: IssueFix;
+};
+
+export type VulnerabilitySummary = {
+  open: number;
+  kev: number;
+  kev_devices: number;
+  with_fix: number;
+  within_sla: number;
+  due_this_week: number;
+  opened_this_week: number;
+};
+
+export type AffectedDevice = {
+  id: string;
+  hostname: string;
+  computer_name: string;
+  serial: string;
+  username: string;
+  version: string;
+  build: string;
+  evidence: string;
+};
+
+export type IssueEvent = {
+  id: string;
+  at: string;
+  actor: string;
+  action: string;
+  detail: Record<string, unknown>;
+};
+
+export type VulnerabilityDetail = VulnerabilityIssue & {
+  devices: AffectedDevice[];
+  events: IssueEvent[];
+  installs: number;
+  affected: number;
+};
+
+export type IssueQuery = {
+  kev?: boolean;
+  severity?: string;
+  status?: string;
+  hasFix?: boolean;
+  active?: boolean;
+  q?: string;
+  limit?: number;
+  offset?: number;
+};
+
 const TOKEN_KEY = "mc.token";
 
 export function getToken(): string {
@@ -427,4 +520,22 @@ export const api = {
     request<LogPage>(`/api/v1/log-views/${id}/tail`, { method: "POST", body: JSON.stringify(body) }),
   contextLog: (id: string, body: { device_id?: string; line_id: string; before: number; after: number }) =>
     request<LogContext>(`/api/v1/log-views/${id}/context`, { method: "POST", body: JSON.stringify(body) }),
+  vulnerabilityIssues: (params: IssueQuery = {}) => {
+    const q = new URLSearchParams();
+    if (params.kev != null) q.set("kev", String(params.kev));
+    if (params.severity) q.set("severity", params.severity);
+    if (params.status) q.set("status", params.status);
+    if (params.hasFix != null) q.set("has_fix", String(params.hasFix));
+    if (params.active) q.set("active", "true");
+    if (params.q) q.set("q", params.q);
+    q.set("limit", String(params.limit ?? 200));
+    if (params.offset) q.set("offset", String(params.offset));
+    return request<{ issues: VulnerabilityIssue[]; summary: VulnerabilitySummary; total: number; limit: number; offset: number }>(`/api/v1/vulnerability-issues?${q}`);
+  },
+  vulnerabilityIssue: (id: string) => request<VulnerabilityDetail>(`/api/v1/vulnerability-issues/${id}`),
+  updateVulnerabilityIssue: (id: string, body: { status: string; assignee: string; notes: string; risk_until: string | null; revision: number }) =>
+    request<VulnerabilityIssue>(`/api/v1/vulnerability-issues/${id}`, { method: "POST", body: JSON.stringify(body) }),
+  runVulnerabilityRecipe: (id: string) =>
+    request<Job>(`/api/v1/vulnerability-issues/${id}/run-recipe`, { method: "POST" }),
+  deviceVulnerabilities: (id: string) => request<{ issues: VulnerabilityIssue[] }>(`/api/v1/devices/${id}/vulnerabilities`),
 };

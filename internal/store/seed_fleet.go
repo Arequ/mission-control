@@ -28,7 +28,10 @@ func (s *Store) seedFleet(ctx context.Context) error {
 				return err
 			}
 		}
-		return s.seedLogViews(ctx)
+		if err := s.seedLogViews(ctx); err != nil {
+			return err
+		}
+		return s.seedVulnerabilities(ctx)
 	}
 	p := model.Principal{Kind: "system", ID: "seed", Name: "seed"}
 	if _, err := s.CreateEnrollSecret(ctx, p, model.EnrollSecret{
@@ -72,7 +75,7 @@ func (s *Store) seedFleet(ctx context.Context) error {
 		{"26.1", "25B78"},
 		{"26.0.1", "25A362"},
 		{"15.7.1", "24G231"},
-		{"15.6.1", "24G517"},
+		{"15.1", "24B83"},
 		{"14.8", "23J20"},
 	}
 	depts := []string{"ENG", "DES", "SAL", "FIN", "OPS"}
@@ -180,7 +183,10 @@ func (s *Store) seedFleet(ctx context.Context) error {
 	if err := s.seedCoverage(ctx); err != nil {
 		return err
 	}
-	return s.seedLogViews(ctx)
+	if err := s.seedLogViews(ctx); err != nil {
+		return err
+	}
+	return s.seedVulnerabilities(ctx)
 }
 
 func (s *Store) seedDeviceApps(ctx context.Context, deviceID string, i int) error {
@@ -189,13 +195,13 @@ func (s *Store) seedDeviceApps(ctx context.Context, deviceID string, i int) erro
 		versions           []string
 	}
 	catalog := []app{
-		{"Google Chrome", "com.google.Chrome", "/Applications/Google Chrome.app", []string{"131.0.6778.86", "131.0.6778.70", "130.0.6723.117"}},
+		{"Google Chrome", "com.google.Chrome", "/Applications/Google Chrome.app", []string{"131.0.6778.86", "131.0.6778.70", "130.0.6723.117", "127.0.6533.99"}},
 		{"Slack", "com.tinyspeck.slackmacgap", "/Applications/Slack.app", []string{"4.41.105", "4.40.128"}},
-		{"Zoom Workplace", "us.zoom.xos", "/Applications/zoom.us.app", []string{"6.2.11.43613", "6.1.10.39410"}},
+		{"Zoom Workplace", "us.zoom.xos", "/Applications/zoom.us.app", []string{"6.2.11.43613", "6.0.11"}},
 		{"1Password", "com.1password.1password", "/Applications/1Password.app", []string{"8.10.48", "8.10.46"}},
 		{"Visual Studio Code", "com.microsoft.VSCode", "/Applications/Visual Studio Code.app", []string{"1.95.2", "1.94.2"}},
 		{"Docker Desktop", "com.docker.docker", "/Applications/Docker.app", []string{"4.35.1", "4.34.3"}},
-		{"Firefox", "org.mozilla.firefox", "/Applications/Firefox.app", []string{"132.0.1", "131.0.3"}},
+		{"Firefox", "org.mozilla.firefox", "/Applications/Firefox.app", []string{"132.0.2", "131.0.1"}},
 		{"Microsoft Word", "com.microsoft.Word", "/Applications/Microsoft Word.app", []string{"16.90", "16.89"}},
 		{"Microsoft Excel", "com.microsoft.Excel", "/Applications/Microsoft Excel.app", []string{"16.90", "16.89"}},
 		{"iTerm", "com.googlecode.iterm2", "/Applications/iTerm.app", []string{"3.5.10"}},
@@ -230,10 +236,30 @@ func (s *Store) seedDeviceApps(ctx context.Context, deviceID string, i int) erro
 			continue
 		}
 		version := a.versions[i%len(a.versions)]
+		if a.bundle == "org.mozilla.firefox" {
+			if i%8 == 0 {
+				version = "131.0.1"
+			} else {
+				version = "132.0.2"
+			}
+		}
 		if _, err := s.pool.Exec(ctx, `
 			INSERT INTO device_apps (device_id, name, path, bundle_id, version)
 			VALUES ($1,$2,$3,$4,$5)`, deviceID, a.name, a.path, a.bundle, version); err != nil {
 			return err
+		}
+	}
+	if i == 0 {
+		extras := []struct{ name, path, bundle, version string }{
+			{"Google Chrome Helper", "/Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Helper.app", "com.google.Chrome.helper", "131.0.6778.86"},
+			{"Chromium", "/Applications/Chromium.app", "org.chromium.Chromium", "131.0.6778.70"},
+		}
+		for _, extra := range extras {
+			if _, err := s.pool.Exec(ctx, `
+				INSERT INTO device_apps (device_id, name, path, bundle_id, version)
+				VALUES ($1,$2,$3,$4,$5)`, deviceID, extra.name, extra.path, extra.bundle, extra.version); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

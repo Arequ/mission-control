@@ -91,6 +91,7 @@ func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
 		newEnrollSecretResource,
 		newSourceConnectorResource,
 		newLogViewResource,
+		newVulnerabilitySettingsResource,
 	}
 }
 

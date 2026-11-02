@@ -178,7 +178,7 @@ func TestTerraformProviderCRUD(t *testing.T) {
 		t.Fatalf("enroll secrets: %s", secrets)
 	}
 	connectors := apiGet(t, ts.URL, "/api/v1/source-connectors")
-	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret"} {
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-nvd-api-key"} {
 		if strings.Contains(connectors, leak) {
 			t.Fatalf("connector response leaked %s: %s", leak, connectors)
 		}
@@ -392,8 +392,12 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fingerprint apply should leave a clean plan, err=%v\n%s", err, out)
 	}
-	if strings.Contains(string(out), "example-crowdstrike-client-secret") || strings.Contains(string(out), "example-kolide-api-token") || strings.Contains(string(out), "example-elastic-api-key") {
+	if strings.Contains(string(out), "example-crowdstrike-client-secret") || strings.Contains(string(out), "example-kolide-api-token") || strings.Contains(string(out), "example-elastic-api-key") || strings.Contains(string(out), "example-nvd-api-key") {
 		t.Fatalf("connector credential leaked in plan:\n%s", out)
+	}
+	vulnSettings := apiGet(t, ts.URL, "/api/v1/vulnerability-settings")
+	if !strings.Contains(vulnSettings, "com.acme.Browser") || !strings.Contains(vulnSettings, `"has_nvd_api_key":true`) || strings.Contains(vulnSettings, "example-nvd-api-key") {
+		t.Fatalf("vulnerability settings: %s", vulnSettings)
 	}
 
 	if _, err := st.Pool().Exec(ctx, `UPDATE osquery_queries SET sql='SELECT 1' WHERE name='launch_daemons'`); err != nil {
@@ -414,7 +418,7 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "rotated-enroll-secret-value"} {
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-nvd-api-key", "rotated-enroll-secret-value"} {
 		if strings.Contains(string(stateRaw), leak) {
 			t.Fatalf("terraform state contains %s", leak)
 		}
@@ -423,7 +427,7 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if err := st.Pool().QueryRow(ctx, `SELECT coalesce(string_agg(detail::text, ''), '') FROM audit_log`).Scan(&audit); err != nil {
 		t.Fatal(err)
 	}
-	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret"} {
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-nvd-api-key"} {
 		if strings.Contains(audit, leak) {
 			t.Fatalf("audit log contains %s", leak)
 		}
@@ -453,6 +457,10 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	viewsLeft := apiGet(t, ts.URL, "/api/v1/log-views")
 	if strings.Contains(viewsLeft, "Endpoint logs") || strings.Contains(viewsLeft, "AutoPKG run log") {
 		t.Fatalf("log views survived destroy: %s", viewsLeft)
+	}
+	vulnLeft := apiGet(t, ts.URL, "/api/v1/vulnerability-settings")
+	if strings.Contains(vulnLeft, "com.acme.Browser") || strings.Contains(vulnLeft, `"has_nvd_api_key":true`) || strings.Contains(vulnLeft, "example-nvd-api-key") {
+		t.Fatalf("destroy should reset vulnerability settings: %s", vulnLeft)
 	}
 	settings = apiGet(t, ts.URL, "/api/v1/pipeline-settings")
 	if !strings.Contains(settings, `"max_concurrency":4`) && !strings.Contains(settings, `"max_concurrency": 4`) {
