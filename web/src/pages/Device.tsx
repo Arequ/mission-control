@@ -42,6 +42,7 @@ export function DevicePage() {
                       Coverage {device.coverage.seen}/{device.coverage.total}
                     </Link>
                   ) : null}
+                  <Link className="coverage-chip quiet" to={`/logs?device=${device.id}`}>Logs for this device</Link>
                 </div>
                 <div className="sub">
                   {[device.username, device.model_name || device.hardware_model, device.cpu_brand, device.os_display || device.os_version]

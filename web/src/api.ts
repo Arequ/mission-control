@@ -280,6 +280,65 @@ export type LiveQuery = {
   rows?: Record<string, string>[];
 };
 
+export type LogSource = {
+  label: string;
+  color: string;
+  index_pattern: string;
+  kql: string;
+  message_field: string;
+  timestamp_field: string;
+  file_field: string;
+  host_field: string;
+  sequence_field: string;
+};
+
+export type LogView = {
+  id: string;
+  name: string;
+  description: string;
+  default_window: string;
+  max_lines: number;
+  device_scoped: boolean;
+  time_zone: string;
+  elastic_url: string;
+  connector_id: string;
+  managed_by: string;
+  has_elastic_api_key: boolean;
+  sources: LogSource[];
+};
+
+export type LogLine = {
+  id: string;
+  timestamp: string;
+  source: string;
+  color: string;
+  file: string;
+  host: string;
+  message: string;
+};
+
+export type LogPage = {
+  lines: LogLine[];
+  cursor: string;
+  has_more_before: boolean;
+  has_more_after: boolean;
+  truncated: boolean;
+  from: string;
+  to: string;
+};
+
+export type LogContext = { lines: LogLine[]; focus: number };
+
+export type LogQuery = {
+  from?: string;
+  to?: string;
+  device_id?: string;
+  limit?: number;
+  cursor?: string;
+  dir?: string;
+  align?: string;
+};
+
 const TOKEN_KEY = "mc.token";
 
 export function getToken(): string {
@@ -360,4 +419,12 @@ export const api = {
   },
   coverageDevice: (id: string) => request<CoverageDevice>(`/api/v1/coverage/devices/${id}`),
   coverageConnectors: () => request<{ connectors: SourceConnector[] }>("/api/v1/coverage/connectors"),
+  logViews: () => request<{ views: LogView[] }>("/api/v1/log-views"),
+  logView: (id: string) => request<LogView>(`/api/v1/log-views/${id}`),
+  queryLog: (id: string, body: LogQuery) =>
+    request<LogPage>(`/api/v1/log-views/${id}/query`, { method: "POST", body: JSON.stringify(body) }),
+  tailLog: (id: string, body: { device_id?: string; limit?: number; cursor: string }) =>
+    request<LogPage>(`/api/v1/log-views/${id}/tail`, { method: "POST", body: JSON.stringify(body) }),
+  contextLog: (id: string, body: { device_id?: string; line_id: string; before: number; after: number }) =>
+    request<LogContext>(`/api/v1/log-views/${id}/context`, { method: "POST", body: JSON.stringify(body) }),
 };

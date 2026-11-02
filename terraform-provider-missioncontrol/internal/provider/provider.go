@@ -73,6 +73,7 @@ func (p *mcProvider) Configure(ctx context.Context, req provider.ConfigureReques
 	}
 	client := &Client{Base: endpoint, Token: token, HTTP: &http.Client{}}
 	resp.ResourceData = client
+	resp.DataSourceData = client
 }
 
 func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
@@ -89,11 +90,12 @@ func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
 		newOsqueryLabelResource,
 		newEnrollSecretResource,
 		newSourceConnectorResource,
+		newLogViewResource,
 	}
 }
 
 func (p *mcProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{newLogViewDataSource}
 }
 
 func configureClient(req resource.ConfigureRequest, resp *resource.ConfigureResponse) *Client {

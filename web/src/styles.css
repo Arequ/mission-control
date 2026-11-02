@@ -924,6 +924,152 @@ html.dark .textlink { color: var(--accent-ink); }
   .cols-connector { grid-template-columns: 32px 1fr; }
 }
 
+.main:has(.logs-shell) { overflow: hidden; }
+.logs-shell {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.log-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px 0 22px;
+  flex-wrap: wrap;
+}
+.log-controls .grow { flex: 1; }
+.log-wins { width: auto; }
+.log-jump { display: flex; gap: 6px; align-items: center; }
+.log-jump .field { height: 30px; width: 190px; }
+.log-note { margin: 8px 22px 0; }
+.log-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: 12px 20px 16px 22px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--code);
+  box-shadow: inset 0 0 0 1px var(--card-border), var(--shadow);
+  overflow: hidden;
+}
+.log-meta {
+  display: flex;
+  gap: 14px;
+  padding: 8px 12px;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--sep-2);
+}
+.log-scroll { flex: 1; min-height: 0; overflow: auto; overflow-anchor: none; }
+.log-canvas { position: relative; }
+.log-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 24px;
+  display: grid;
+  grid-template-columns: 3px 158px minmax(92px, 180px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  margin: 0;
+  padding: 0 14px 0 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 24px;
+  letter-spacing: 0;
+  color: var(--text);
+}
+.log-row.multi { grid-template-columns: 3px 158px 68px minmax(80px, 160px) minmax(0, 1fr); }
+.log-row.fresh { animation: log-in 280ms var(--ease) both; }
+.log-row:hover { background: var(--hover); }
+.log-row.on { background: var(--blue-bg); }
+.log-row .gutter { height: 100%; }
+.log-row time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.log-row .src { font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-row .file { color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-row .msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--text-3);
+  font-weight: 550;
+}
+.log-context {
+  position: absolute;
+  top: 34px;
+  right: 10px;
+  bottom: 10px;
+  width: min(460px, 48%);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--card-border), var(--shadow);
+  animation: log-panel 280ms var(--ease) both;
+  overflow: hidden;
+}
+.log-context-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 8px 8px 12px;
+  font-weight: 650;
+}
+.log-context-body { overflow: auto; padding-bottom: 8px; }
+.log-context-line {
+  display: grid;
+  grid-template-columns: 3px 1fr;
+  gap: 8px;
+  min-height: 22px;
+  align-items: start;
+  padding-right: 10px;
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.log-context-line .gutter { min-height: 22px; }
+.log-context-line .msg { white-space: pre-wrap; word-break: break-word; padding: 2px 0; }
+.log-context-line.on { background: var(--blue-bg); }
+.log-view-row { grid-template-columns: minmax(180px, 1.2fr) minmax(180px, 1.4fr) 48px 72px; text-decoration: none; }
+.log-view-name { min-width: 0; }
+.source-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+.source-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--field);
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+.source-pill i { width: 7px; height: 7px; border-radius: 99px; display: block; }
+.log-device-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+}
+@keyframes log-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes log-panel { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
+@media (max-width: 980px) {
+  .log-view-row { grid-template-columns: 1fr auto; }
+  .log-row { grid-template-columns: 3px 132px minmax(0, 1fr); }
+  .log-row .file { display: none; }
+  .log-context { width: calc(100% - 20px); }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation: none !important;

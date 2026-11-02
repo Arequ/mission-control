@@ -16,7 +16,7 @@ info:
     and offset, and return total.
     Scopes include osquery:read and osquery:write. Live queries and node
     invalidation are operational and do not require the Terraform client header.
-    Coverage reads use osquery:read. Source connectors are configuration:
+    Coverage reads use osquery:read. Log view runs use logs:read. Source connectors are configuration:
     writes require config:write and the Terraform client header. Connector
     credentials are write-only and are never returned.
 servers:
@@ -737,6 +737,63 @@ paths:
       summary: Create an enroll secret. Requires the Terraform client header.
       responses:
         "201": { description: created }
+  /api/v1/log-views:
+    get:
+      tags: [config]
+      summary: List log views. Credentials are never returned. name is an optional exact match.
+      parameters:
+        - { name: name, in: query, schema: { type: string } }
+      responses:
+        "200": { description: list }
+    post:
+      tags: [config]
+      summary: Create a log view. Requires the Terraform client header. elastic_api_key is write-only.
+      responses:
+        "201": { description: created }
+  /api/v1/log-views/{id}:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    get:
+      tags: [config]
+      summary: Get a log view. Credentials are never returned.
+      responses:
+        "200": { description: log view }
+        "404": { description: not found }
+    put:
+      tags: [config]
+      summary: Update a log view. Requires the Terraform client header. An empty elastic_api_key keeps the stored value.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a log view. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/log-views/{id}/query:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    post:
+      tags: [config]
+      summary: Run a log view for a time window. Requires logs:read. Lines are merged by timestamp, source, then sequence.
+      responses:
+        "200": { description: page }
+  /api/v1/log-views/{id}/tail:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    post:
+      tags: [config]
+      summary: Poll lines strictly after a cursor. Requires logs:read.
+      responses:
+        "200": { description: page }
+  /api/v1/log-views/{id}/context:
+    parameters:
+      - $ref: "#/components/parameters/id"
+    post:
+      tags: [config]
+      summary: Lines before and after one line, across every source in the view. Requires logs:read.
+      responses:
+        "200": { description: context }
+        "404": { description: not found }
   /api/v1/source-connectors:
     get:
       tags: [config]

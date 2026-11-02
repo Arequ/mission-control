@@ -186,6 +186,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /api/v1/osquery/enroll-secrets/{id}", s.withConfigWrite(http.HandlerFunc(s.updateEnrollSecret)))
 	mux.Handle("DELETE /api/v1/osquery/enroll-secrets/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteEnrollSecret)))
 
+	mux.Handle("GET /api/v1/log-views", s.withAPI("config:read", http.HandlerFunc(s.listLogViews)))
+	mux.Handle("POST /api/v1/log-views", s.withConfigWrite(http.HandlerFunc(s.createLogView)))
+	mux.Handle("GET /api/v1/log-views/{id}", s.withAPI("config:read", http.HandlerFunc(s.getLogView)))
+	mux.Handle("PUT /api/v1/log-views/{id}", s.withConfigWrite(http.HandlerFunc(s.updateLogView)))
+	mux.Handle("DELETE /api/v1/log-views/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteLogView)))
+	mux.Handle("POST /api/v1/log-views/{id}/query", s.withAPI("logs:read", http.HandlerFunc(s.queryLogView)))
+	mux.Handle("POST /api/v1/log-views/{id}/tail", s.withAPI("logs:read", http.HandlerFunc(s.tailLogView)))
+	mux.Handle("POST /api/v1/log-views/{id}/context", s.withAPI("logs:read", http.HandlerFunc(s.contextLogView)))
+
 	mux.Handle("GET /api/v1/source-connectors", s.withAPI("config:read", http.HandlerFunc(s.listConnectors)))
 	mux.Handle("POST /api/v1/source-connectors", s.withConfigWrite(http.HandlerFunc(s.createConnector)))
 	mux.Handle("GET /api/v1/source-connectors/{id}", s.withAPI("config:read", http.HandlerFunc(s.getConnector)))
