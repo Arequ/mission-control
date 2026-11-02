@@ -12,6 +12,7 @@ BASE = os.environ.get("MC_URL", "http://server:8080").rstrip("/")
 SERIAL = os.environ.get("MC_SERIAL", "C02DEMO0001")
 SECRET = os.environ.get("MC_SECRET", "example-munki-enrollment-secret")
 HOST = os.environ.get("MC_HOSTNAME", "ava-mbp.local")
+UUID = os.environ.get("MC_UUID", "A1B2C3D4-E5F6-4789-ABCD-EF1234567890")
 
 
 def req(method: str, path: str, body: bytes | None = None, headers: dict | None = None):
@@ -30,6 +31,7 @@ def report() -> bytes:
 <key>MachineInfo</key><dict>
   <key>hostname</key><string>{HOST}</string>
   <key>serial_number</key><string>{SERIAL}</string>
+  <key>hardware_uuid</key><string>{UUID}</string>
   <key>os_vers</key><string>15.1.1</string>
   <key>machine_model</key><string>Mac16,8</string>
 </dict>
@@ -68,7 +70,7 @@ def once() -> bool:
         "Content-Encoding": "gzip",
         "Idempotency-Key": uuid.uuid4().hex,
     })
-    print("checkin", status, body.decode()[:300])
+    print("checkin", status, body.decode()[:300], flush=True)
     return status == 200
 
 

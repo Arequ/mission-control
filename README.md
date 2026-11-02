@@ -2,7 +2,79 @@
 
 API-first Munki, AutoPkg, and osquery inventory for a Mac fleet. The server is a stateless Go service on Postgres. Configuration is applied by Terraform, not edited in the UI. AutoPkg runs on Macs through `mc-runner`, which only makes outbound calls. osqueryd uses the TLS remote API.
 
-Security Coverage joins osquery, Munki, and six security tools into one matrix. Vulnerabilities correlate that inventory with NVD, CISA KEV, FIRST EPSS, and Apple security releases. Logs and the matching rules are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Security Coverage joins osquery, Munki, and six security tools into one matrix. Vulnerabilities correlate that inventory with NVD, CISA KEV, FIRST EPSS, and Apple security releases. The longer map is [HANDOFF.md](HANDOFF.md). Logs and the matching rules are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). The design tokens live in [web/src/styles.css](web/src/styles.css).
+
+## How to launch it
+
+### 60-second demo
+
+Requires Docker. From a checkout of this branch:
+
+```bash
+make demo
+make smoke
+```
+
+`make demo` (`scripts/demo.sh`) generates a three-day TLS certificate under `.demo/tls` (gitignored), adds `127.0.0.1 dex` to `/etc/hosts`, accepts forwarded packets if an old `iptables-legacy` policy is DROP, stops a host Postgres listening on 5432, and runs `docker compose up -d --build`. It then builds the local Terraform provider and applies `examples/terraform`. A second plan must be empty.
+
+Open **http://localhost:8080** (that host, not `127.0.0.1`: the session cookie is host-only and the OIDC redirect is `MC_PUBLIC_URL`). Sign in as `ava@example.com` / `example-oidc-password`. Dex does not send groups for that static user, so the role is **viewer**. You should see the fleet shell, a device for the fake Munki client (`C02DEMO0001`, hostname `ava-mbp.local`) with a Munki card, an enrolled osquery host `mbp-eng-0217`, and Logs after `make smoke` indexes a few Elasticsearch lines. `make smoke` checks health, that login, osquery enrollment and `SELECT 1`, the Munki card, those log lines, the coverage matrix, and the vulnerability list (empty until a feed sync, because `MC_DEV_SEED=0`).
+
+| Port | What |
+| --- | --- |
+| 8080 | API and UI |
+| 8443 | osquery TLS |
+| 5432 | Postgres (`missioncontrol` / `missioncontrol`) |
+| 9200 | Elasticsearch 8, security off |
+| 5556 | Dex. Issuer `http://dex:5556/dex` |
+
+These values are local placeholders, the same class as `mc_dev_admin_token`. Do not reuse them outside this repo. API tokens still work: `Authorization: Bearer mc_dev_admin_token`.
+
+### Native dev server
+
+Postgres database `missioncontrol`, user `missioncontrol`, password `missioncontrol`, listening on `127.0.0.1:5432`. Then:
+
+```bash
+make test
+make ui
+make server
+```
+
+`make server` listens on `:8080` with `MC_DEV_SEED=1` unless you override it, and the same local tokens as `.env.example`. The UI is served from `web/dist`. The browser does not accept the API token. Without an OIDC provider the sign-in screen says no identity provider is configured. For a local UI session, turn break-glass on (off in production and in compose):
+
+```bash
+MC_BREAK_GLASS=1 MC_BREAK_GLASS_PASSWORD=example-break-glass-password make server
+```
+
+The password form is on the sign-in screen only while that flag is on. `cd web && npm run dev` serves the UI on http://localhost:5173 and proxies `/api`, `/repo`, and `/healthz` to `127.0.0.1:8080`.
+
+`TEST_DATABASE_ADMIN` overrides the admin connection the tests use to create throwaway databases. The default is `postgres://missioncontrol:missioncontrol@127.0.0.1:5432/postgres?sslmode=disable`.
+
+### Production
+
+There is no Helm chart. `deploy/k8s/server.yaml` is a Deployment (two replicas) and a Service. It expects a Secret named `mission-control` and external Postgres. Package bytes go to S3 so replicas do not share a disk. This manifest has not been applied to a cluster from this repo's test environment.
+
+Secret keys: `database-url`, `admin-token`, `bootstrap-token`, `repo-token`, `s3-access-key`, `s3-secret-key`. Plain env in the manifest: `MC_STORAGE_DRIVER=s3`, `MC_S3_ENDPOINT`, `MC_S3_BUCKET`, `MC_HTTP_ADDR=:8080`, `MC_DEV_SEED=0`, `MC_COOKIE_SECURE=1`, `MC_BREAK_GLASS=0`, `MC_PUBLIC_URL` (change `https://mc.example`), `MC_CONFIG_REPO=Arequ/terraform-mission-control`.
+
+First boot upserts `MC_ADMIN_TOKEN` as the `admin` API token with scope `*`. That token is how Terraform authenticates. It is not a browser session. Break-glass (`MC_BREAK_GLASS=1` plus `MC_BREAK_GLASS_PASSWORD`) is the emergency local admin and stays off.
+
+Point a checkout of the private config repo `Arequ/terraform-mission-control` at the cluster:
+
+```bash
+make build tf-dev
+export TF_CLI_CONFIG_FILE="$PWD/bin/dev.tfrc"
+# In that repo, set the provider endpoint and the admin token, then:
+terraform apply
+```
+
+SSO is `missioncontrol_sso_provider` (issuer, client id, write-only client secret, allowed domains, group claim) and `missioncontrol_role_binding` (IdP group to viewer, operator, or admin). Register the redirect `https://<MC_PUBLIC_URL host>/api/v1/sso/callback` at the IdP. The provider in `examples/terraform` is the local Dex issuer and is not a production IdP.
+
+Enroll a Mac (the server side of this is what compose exercises; a physical Mac was not enrolled from this environment):
+
+- osqueryd: `--tls_hostname=<ingress>:443`, `--tls_server_certs` for that certificate, the historical endpoints `/enroll`, `/config`, `/logger`, `/distributed_read`, `/distributed_write`, and `--disable_distributed=false`. The enroll secret file contains the Terraform `missioncontrol_osquery_enroll_secret` value.
+- Munki: `SoftwareRepoURL` `https://<host>/repo`, `AdditionalHttpHeaders` with `Authorization: Basic` or `Bearer` using the enrollment secret or the per-serial HMAC described in `client/munki/README.md`. Install the package built by `client/munki/build-pkg.sh` on macOS (`pkgbuild` is not available on Linux). The postflight posts `ManagedInstallReport.plist` to `POST /munki/checkin`.
+- AutoPkg: run `mc-runner` on the Mac with `--autopkg autopkg`, `--sync-repos`, the bootstrap token, and a pool label that matches the recipe.
+
+Terminate TLS at the ingress for both the UI and osquery, or set `MC_TLS_CERT` and `MC_TLS_KEY` and publish `MC_TLS_ADDR` (compose uses `:8443`).
 
 ## Quickstart
 

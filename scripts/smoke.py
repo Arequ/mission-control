@@ -10,7 +10,9 @@ import urllib.parse
 import urllib.request
 import http.cookiejar
 
-BASE = os.environ.get("MC_URL", "http://127.0.0.1:8080").rstrip("/")
+# The OIDC redirect URI is MC_PUBLIC_URL (http://localhost:8080). The session
+# cookie is host-only, so this client must use that same host.
+BASE = os.environ.get("MC_URL", "http://localhost:8080").rstrip("/")
 TOKEN = os.environ.get("MC_ADMIN_TOKEN", "mc_dev_admin_token")
 ES = os.environ.get("ES_URL", "http://127.0.0.1:9200").rstrip("/")
 
@@ -129,17 +131,18 @@ def live_query(device_id: str) -> None:
     fail("live query timed out")
 
 
-def wait_munki() -> None:
+def wait_munki() -> dict:
     for _ in range(40):
         found = device_by_serial("C02DEMO0001")
         if found:
             status, device = api("GET", f"/api/v1/devices/{found['id']}")
             card = (device or {}).get("munki") if status == 200 else None
-            if card and card.get("munki_version"):
+            if card and card.get("munki_version") and device.get("hardware_uuid"):
                 ok(f"munki card status={card.get('status')} pending={card.get('pending')}")
-                return
+                return device
         time.sleep(3)
     fail("munki check-in did not show on a device")
+    return {}
 
 
 def seed_and_logs(hostname: str, serial: str, uuid: str) -> None:
@@ -169,10 +172,12 @@ def seed_and_logs(hostname: str, serial: str, uuid: str) -> None:
         found = device_by_serial(serial)
     if not found:
         fail("log device missing")
+    start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 6 * 3600))
+    end = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3600))
     body = {
         "device_id": found["id"],
-        "from": "2026-10-19T00:00:00Z",
-        "to": "2026-10-20T00:00:00Z",
+        "from": start,
+        "to": end,
     }
     status, result = api("POST", f"/api/v1/log-views/{view_id}/query", body)
     if status != 200:
@@ -199,8 +204,10 @@ def main() -> None:
     sso_login()
     device = wait_osquery()
     live_query(device["id"])
-    wait_munki()
-    seed_and_logs(device.get("hostname") or "mbp-eng-0217", device.get("serial") or "", device.get("hardware_uuid") or "")
+    # Endpoint logs bind serial and hardware UUID. The osquery container has no
+    # serial; the Munki client reports both.
+    munki = wait_munki()
+    seed_and_logs(munki.get("hostname") or "ava-mbp.local", munki.get("serial") or "", munki.get("hardware_uuid") or "")
     coverage_and_vulns()
     print("smoke passed")
 

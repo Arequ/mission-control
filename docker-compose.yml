@@ -78,7 +78,7 @@ services:
       retries: 30
 
   osquery:
-    image: osquery/osquery:5.14.1
+    image: osquery/osquery:5.17.0-ubuntu24.04
     hostname: mbp-eng-0217
     entrypoint: ["osqueryd"]
     command:
@@ -100,6 +100,7 @@ services:
       MC_SERIAL: C02DEMO0001
       MC_SECRET: example-munki-enrollment-secret
       MC_HOSTNAME: ava-mbp.local
+      MC_UUID: A1B2C3D4-E5F6-4789-ABCD-EF1234567890
     depends_on:
       server:
         condition: service_healthy

@@ -17,13 +17,21 @@ if [ ! -f .demo/tls/server.crt ] || [ ! -f .demo/tls/server.key ]; then
     -addext "subjectAltName=DNS:server,DNS:localhost,IP:127.0.0.1"
 fi
 printf '%s\n' "example-enroll-secret" > .demo/osquery/enroll.secret
-chmod 644 .demo/osquery/enroll.secret .demo/tls/server.crt
+chmod 600 .demo/osquery/enroll.secret
+chmod 644 .demo/tls/server.crt
 cp deploy/osquery/osquery.flags .demo/osquery/osquery.flags
 
 if [ -w /etc/hosts ] || command -v sudo >/dev/null 2>&1; then
   if ! grep -q '[[:space:]]dex$' /etc/hosts; then
     echo "127.0.0.1 dex" | sudo tee -a /etc/hosts >/dev/null
   fi
+fi
+
+# Docker on some hosts writes bridge rules with nftables while an older
+# iptables-legacy FORWARD policy stays DROP. That blackholes container-to-container
+# traffic (the server cannot reach Postgres). Accept forwarded packets there.
+if command -v iptables-legacy >/dev/null 2>&1 && sudo iptables-legacy -S FORWARD 2>/dev/null | grep -q '^-P FORWARD DROP'; then
+  sudo iptables-legacy -P FORWARD ACCEPT
 fi
 
 # Compose publishes Postgres on 5432. A host Postgres must not hold that port.
