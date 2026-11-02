@@ -10,6 +10,8 @@ type serverMeta struct {
 	ConfigRepo   string            `json:"config_repo"`
 	ConfigBranch string            `json:"config_branch"`
 	ConfigLinks  map[string]string `json:"config_links"`
+	BreakGlass   bool              `json:"break_glass"`
+	SSOEnabled   bool              `json:"sso_enabled"`
 }
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
@@ -26,9 +28,17 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		}
 		links[string(kind)] = link
 	}
+	ssoOn := false
+	if s.store != nil {
+		if items, err := s.store.ListEnabledSSOProviders(r.Context()); err == nil && len(items) > 0 {
+			ssoOn = true
+		}
+	}
 	writeJSON(w, http.StatusOK, serverMeta{
 		ConfigRepo:   repo.Slug,
 		ConfigBranch: repo.Branch,
 		ConfigLinks:  links,
+		BreakGlass:   s.breakGlass,
+		SSOEnabled:   ssoOn,
 	})
 }

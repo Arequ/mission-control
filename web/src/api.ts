@@ -160,6 +160,21 @@ export type Device = {
   apps?: DeviceApp[];
   events?: DeviceEvent[];
   coverage?: { seen: number; total: number };
+  munki?: MunkiCard;
+};
+
+export type MunkiCard = {
+  status: string;
+  last_run_start?: string;
+  last_run_end?: string;
+  pending: number;
+  pending_installs: string[];
+  pending_removals: string[];
+  errors: string[];
+  warnings: string[];
+  munki_version: string;
+  console_user: string;
+  manifest: string;
 };
 
 export type OsqueryQuery = {
@@ -432,28 +447,29 @@ export type IssueQuery = {
   offset?: number;
 };
 
-const TOKEN_KEY = "mc.token";
+export type SessionUser = {
+  email: string;
+  name: string;
+  role: string;
+  csrf_token: string;
+};
 
-export function getToken(): string {
-  return sessionStorage.getItem(TOKEN_KEY) ?? "";
-}
+export type PublicProvider = { id: string; name: string; issuer: string };
 
-export function setToken(token: string) {
-  sessionStorage.setItem(TOKEN_KEY, token.trim());
-}
+let csrfToken = "";
 
-export function clearToken() {
-  sessionStorage.removeItem(TOKEN_KEY);
+export function currentCSRF(): string {
+  return csrfToken;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
-  const token = getToken();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (csrfToken && method !== "GET" && method !== "HEAD") headers.set("X-CSRF-Token", csrfToken);
   if (init?.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-  const res = await fetch(base + path, { ...init, headers });
+  const res = await fetch(base + path, { ...init, headers, credentials: "include" });
   if (res.status === 401) {
-    clearToken();
+    csrfToken = "";
     throw new Error("unauthorized");
   }
   if (!res.ok) {
@@ -471,6 +487,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  session: async () => {
+    const user = await request<SessionUser>("/api/v1/session");
+    csrfToken = user.csrf_token;
+    return user;
+  },
+  providers: () => request<{ providers: PublicProvider[] }>("/api/v1/sso/providers"),
+  breakGlass: async (password: string) => {
+    const user = await request<SessionUser>("/api/v1/session/break-glass", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    });
+    csrfToken = user.csrf_token;
+    return user;
+  },
+  signOut: async () => {
+    const res = await request<{ ok: boolean; logout_url?: string }>("/api/v1/session/logout", { method: "POST" });
+    csrfToken = "";
+    const next = res.logout_url ?? "";
+    if (next.startsWith("https://") || next.startsWith("http://")) {
+      window.location.assign(next);
+      return;
+    }
+    window.location.assign("/");
+  },
   recipes: () => request<{ recipes: Recipe[] }>("/api/v1/recipes"),
   schedules: () => request<{ schedules: Schedule[] }>("/api/v1/schedules"),
   pipeline: () => request<Pipeline>("/api/v1/pipeline-settings"),

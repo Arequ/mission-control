@@ -22,6 +22,10 @@ const (
 )
 
 // Kind is one Terraform config surface the UI can propose a change for.
+// SSO providers and Munki client enrollment are Terraform-managed too, but
+// this repository's allowlist does not yet contain access/sso.tf or
+// munki/clients.tf. Those files should be added there before a propose link
+// is registered. Do not invent a kind whose path is not in the allowlist.
 type Kind string
 
 const (

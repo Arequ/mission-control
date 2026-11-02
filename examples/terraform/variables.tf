@@ -38,11 +38,31 @@ variable "kolide_api_token" {
   default     = "example-kolide-api-token"
 }
 
+variable "elastic_url" {
+  description = "Elasticsearch origin for log views and elastic-mode connectors. The compose stack uses the unsecured local node."
+  type        = string
+  default     = "http://elasticsearch:9200"
+}
+
 variable "elastic_api_key" {
-  description = "Elasticsearch API key used by the event-log connectors. Placeholder, not a production secret."
+  description = "Elasticsearch API key. Empty talks to an unsecured node. This is not a production secret."
   type        = string
   sensitive   = true
-  default     = "example-elastic-api-key"
+  default     = ""
+}
+
+variable "oidc_client_secret" {
+  description = "OIDC client secret for the local Dex provider. Placeholder for local applies, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-oidc-client-secret"
+}
+
+variable "munki_enrollment_secret" {
+  description = "Shared Munki client secret. Placeholder for local applies, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-munki-enrollment-secret"
 }
 
 variable "nvd_api_key" {

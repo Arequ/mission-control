@@ -213,6 +213,11 @@ func (s *Store) GetDevice(ctx context.Context, id string, offline time.Duration)
 		return model.Device{}, err
 	}
 	d.Coverage = &cov
+	if card, ok, err := s.MunkiCard(ctx, id); err != nil {
+		return model.Device{}, err
+	} else if ok {
+		d.Munki = &card
+	}
 	presentDevice(&d.Device, offline, s.now())
 	return d.Device, nil
 }

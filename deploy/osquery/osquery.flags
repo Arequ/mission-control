@@ -1,0 +1,16 @@
+--tls_hostname=server:8443
+--tls_server_certs=/etc/osquery/server.crt
+--enroll_secret_path=/etc/osquery/enroll.secret
+--enroll_tls_endpoint=/enroll
+--config_plugin=tls
+--config_tls_endpoint=/config
+--logger_plugin=tls
+--logger_tls_endpoint=/logger
+--distributed_plugin=tls
+--disable_distributed=false
+--distributed_tls_read_endpoint=/distributed_read
+--distributed_tls_write_endpoint=/distributed_write
+--host_identifier=hostname
+--config_tls_refresh=10
+--distributed_interval=5
+--verbose

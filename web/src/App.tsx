@@ -1,6 +1,6 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
-import { getToken, setToken } from "./api";
+import { api, type PublicProvider, type SessionUser } from "./api";
 import { Icon } from "./icons";
 import { AutopkgPage } from "./pages/Autopkg";
 import { DevicePage } from "./pages/Device";
@@ -14,7 +14,7 @@ import { CoverageConnectorsPage, CoverageDevicePage, CoveragePage } from "./page
 import { LogViewerPage, LogsPage } from "./pages/Logs";
 import { VulnerabilitiesPage } from "./pages/Vulnerabilities";
 import { SettingsPage } from "./pages/Settings";
-import { Layout, Providers, useTheme } from "./ui";
+import { Layout, Providers, SessionProvider, useServerMeta, useTheme } from "./ui";
 
 export function App() {
   return (
@@ -25,9 +25,20 @@ export function App() {
 }
 
 function Authed() {
-  const [authed, setAuthed] = useState(getToken() !== "");
-  if (!authed) return <Login onDone={() => setAuthed(true)} />;
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let stop = false;
+    api.session()
+      .then((next) => { if (!stop) setUser(next); })
+      .catch(() => { if (!stop) setUser(null); })
+      .finally(() => { if (!stop) setReady(true); });
+    return () => { stop = true; };
+  }, []);
+  if (!ready) return <div className="login" />;
+  if (!user) return <Login onDone={setUser} />;
   return (
+    <SessionProvider user={user}>
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<OverviewPage />} />
@@ -55,46 +66,61 @@ function Authed() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>
+    </SessionProvider>
   );
 }
 
-function Login({ onDone }: { onDone: () => void }) {
-  const [token, setValue] = useState("");
+function Login({ onDone }: { onDone: (user: SessionUser) => void }) {
   const { theme, setTheme } = useTheme();
-  const submit = (event: FormEvent) => {
+  const meta = useServerMeta();
+  const [providers, setProviders] = useState<PublicProvider[]>([]);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api.providers().then((page) => setProviders(page.providers)).catch(() => setProviders([]));
+  }, []);
+  const local = (event: FormEvent) => {
     event.preventDefault();
-    if (!token.trim()) return;
-    setToken(token);
-    onDone();
+    setError("");
+    api.breakGlass(password).then(onDone).catch((err: Error) => setError(err.message));
   };
   return (
     <div className="login page">
-      <form className="card login-card" onSubmit={submit}>
+      <div className="card login-card enter">
         <span className="mark"><Icon name="orbit" size={15} /></span>
         <h1>Mission Control</h1>
-        <p className="sub">Paste an API token. Configuration stays in Terraform.</p>
-        <input
-          className="field"
-          autoFocus
-          type="password"
-          placeholder="API token"
-          value={token}
-          onChange={(event) => setValue(event.target.value)}
-          aria-label="API token"
-        />
-        <button className="capsule primary" type="submit">Continue</button>
+        <p className="sub">Sign in with your organization. Configuration stays in Terraform.</p>
+        <div className="login-providers">
+          {providers.map((provider) => (
+            <a key={provider.id} className="capsule primary" href={`/api/v1/sso/login?provider=${encodeURIComponent(provider.id)}&return=/`}>
+              Continue with {provider.name}
+            </a>
+          ))}
+          {providers.length === 0 ? <p className="faint">No identity provider is configured yet.</p> : null}
+        </div>
+        {meta.break_glass ? (
+          <form onSubmit={local}>
+            <p className="sub">Break-glass local admin</p>
+            <input
+              className="field"
+              type="password"
+              placeholder="Local password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              aria-label="Break-glass password"
+            />
+            <button className="capsule" type="submit">Sign in locally</button>
+          </form>
+        ) : null}
+        {error ? <p className="note">{error}</p> : null}
         <div className="choice" style={{ marginTop: 16 }}>
           <span className="faint">Appearance</span>
-          <button
-            className="capsule"
-            type="button"
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-          >
+          <button className="capsule" type="button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
             <Icon name={theme === "dark" ? "moon" : "sun"} size={14} />
             {theme === "dark" ? "Dark" : "Light"}
           </button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

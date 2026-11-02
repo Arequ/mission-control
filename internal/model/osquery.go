@@ -112,6 +112,7 @@ type Device struct {
 	Apps             []DeviceApp     `json:"apps,omitempty"`
 	Events           []AuditEntry    `json:"events,omitempty"`
 	Coverage         *DeviceCoverage `json:"coverage,omitempty"`
+	Munki            *MunkiCard      `json:"munki,omitempty"`
 }
 
 // DeviceApp is one installed application from the latest inventory snapshot.

@@ -1,0 +1,14 @@
+#!/bin/sh
+# Munki preflight. Sets ClientIdentifier to the hardware serial when it is unset.
+# Munki runs this with its bundled Python available, but this script is POSIX sh.
+set -eu
+SERIAL="$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null | awk -F\" '/IOPlatformSerialNumber/ {print $4; exit}')"
+if [ -z "${SERIAL}" ]; then
+  exit 0
+fi
+PREF="/Library/Preferences/ManagedInstalls"
+CURRENT="$(defaults read "${PREF}" ClientIdentifier 2>/dev/null || true)"
+if [ -z "${CURRENT}" ]; then
+  defaults write "${PREF}" ClientIdentifier -string "${SERIAL}"
+fi
+exit 0

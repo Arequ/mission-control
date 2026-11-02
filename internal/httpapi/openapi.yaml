@@ -8,7 +8,16 @@ info:
     and DELETE require the header X-Mission-Control-Client: terraform in
     addition to a token with config:write. Runners call the lease, log,
     artifact, and complete endpoints with a runner token and the lease attempt.
-    Munki clients fetch catalogs, manifests, and packages under /repo.
+    Munki clients fetch catalogs, manifests, pkgsinfo, icons, and packages under /repo.
+    They authenticate with HTTP Basic or a bearer token: the repo token, an API
+    token with munki:read, a munki enrollment secret, an enrollment-derived
+    device token, or a per-device token. POST /munki/checkin accepts a
+    ManagedInstallReport plist (optionally gzip or multipart with InstallInfo).
+    The web UI signs in with OIDC (authorization code and PKCE). Browser
+    sessions use an HttpOnly cookie and send X-CSRF-Token on state-changing
+    requests. A present Authorization header is exclusive and does not fall
+    back to the cookie. API tokens keep working for Terraform and automation.
+    Break-glass local admin is off unless MC_BREAK_GLASS is set.
     osqueryd uses the TLS remote API at /enroll, /config, /logger,
     /distributed_read, and /distributed_write. Those routes authenticate with
     an enroll secret or a node key, not an API token.
@@ -617,6 +626,212 @@ paths:
       responses:
         "200":
           description: audit, limit, offset, and total
+  /api/v1/munki/enrollments:
+    get:
+      tags: [munki]
+      summary: List Munki client enrollments. Secrets are not returned.
+      responses:
+        "200": { description: enrollments }
+    post:
+      tags: [munki]
+      summary: Create a Munki enrollment. Requires the Terraform client header.
+      responses:
+        "201": { description: created, without the secret }
+  /api/v1/munki/enrollments/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [munki]
+      summary: Get a Munki enrollment. The secret is not returned.
+      responses:
+        "200": { description: enrollment }
+    put:
+      tags: [munki]
+      summary: Update a Munki enrollment. An empty secret keeps the stored value.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [munki]
+      summary: Delete a Munki enrollment and its clients.
+      responses:
+        "204": { description: deleted }
+  /api/v1/munki/clients:
+    get:
+      tags: [munki]
+      summary: List per-device Munki clients. Tokens are not returned.
+      responses:
+        "200": { description: clients }
+    post:
+      tags: [munki]
+      summary: Bind a serial to an enrollment. Requires the Terraform client header.
+      responses:
+        "201": { description: created, without the token }
+  /api/v1/munki/clients/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [munki]
+      responses:
+        "200": { description: client }
+    put:
+      tags: [munki]
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [munki]
+      responses:
+        "204": { description: deleted }
+  /api/v1/sso/providers:
+    get:
+      tags: [meta]
+      security: []
+      summary: Enabled OIDC providers for the sign-in screen. No client id or secret.
+      responses:
+        "200": { description: public providers }
+  /api/v1/sso/login:
+    get:
+      tags: [meta]
+      security: []
+      summary: Start OIDC authorization code with PKCE.
+      parameters:
+        - in: query
+          name: provider
+          required: true
+          schema: { type: string }
+        - in: query
+          name: return
+          schema: { type: string }
+          description: Same-origin path. Anything else becomes /.
+      responses:
+        "302": { description: redirect to the identity provider }
+  /api/v1/sso/callback:
+    get:
+      tags: [meta]
+      security: []
+      summary: OIDC redirect URI. Sets the session cookie and redirects to the safe return path.
+      responses:
+        "302": { description: signed in }
+        "400": { description: state, nonce, issuer, or token check failed }
+  /api/v1/sso/config:
+    get:
+      tags: [config]
+      summary: List OIDC providers. Client secrets are not returned.
+      responses:
+        "200": { description: providers }
+    post:
+      tags: [config]
+      summary: Create an OIDC provider. Requires the Terraform client header.
+      responses:
+        "201": { description: created }
+  /api/v1/sso/config/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [config]
+      responses:
+        "200": { description: provider }
+    put:
+      tags: [config]
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      responses:
+        "204": { description: deleted }
+  /api/v1/sso/role-bindings:
+    get:
+      tags: [config]
+      responses:
+        "200": { description: bindings }
+    post:
+      tags: [config]
+      summary: Map an IdP group to viewer, operator, or admin.
+      responses:
+        "201": { description: created }
+  /api/v1/sso/role-bindings/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [config]
+      responses:
+        "200": { description: binding }
+    put:
+      tags: [config]
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      responses:
+        "204": { description: deleted }
+  /api/v1/session:
+    get:
+      tags: [meta]
+      summary: Current browser session. Cookie auth. Returns the CSRF token.
+      responses:
+        "200": { description: session }
+        "401": { description: signed out }
+  /api/v1/session/logout:
+    post:
+      tags: [meta]
+      summary: Revoke the session. Cookie auth requires X-CSRF-Token. Returns an RP-initiated logout URL when the provider publishes one.
+      responses:
+        "200": { description: signed out }
+  /api/v1/session/refresh:
+    post:
+      tags: [meta]
+      summary: Rotate the session id. Cookie auth requires X-CSRF-Token.
+      responses:
+        "200": { description: new session }
+  /api/v1/session/break-glass:
+    post:
+      tags: [meta]
+      security: []
+      summary: Local admin session. 404 unless MC_BREAK_GLASS is on.
+      responses:
+        "200": { description: session cookie set }
+        "404": { description: break-glass is off }
+  /munki/checkin:
+    post:
+      tags: [munki]
+      summary: Munki preflight or postflight check-in.
+      description: |
+        Body is a ManagedInstallReport plist, gzip-compressed plist, or
+        multipart with a report part and an optional installinfo part.
+        Idempotency-Key replays the same body. A different body for the same
+        key is 409. A report older than the stored run, outside clock skew, is 409.
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        "200": { description: stored }
+        "403": { description: per-device token serial does not match the report }
+        "409": { description: stale report or reused idempotency key }
+        "413": { description: report exceeds size or nesting limits }
+  /repo/pkgsinfo/{name}:
+    get:
+      tags: [munki]
+      summary: One pkginfo plist
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: XML plist }
+  /repo/icons/{name}:
+    get:
+      tags: [munki]
+      summary: Icon bytes. S3 storage redirects to a presigned URL.
+      security:
+        - bearerAuth: []
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: icon }
+        "307": { description: presigned object URL }
   /repo/catalogs/{name}:
     get:
       tags: [munki]
@@ -1088,7 +1303,7 @@ components:
     basicAuth:
       type: http
       scheme: basic
-      description: Password is the repo token or an API token with munki:read.
+      description: Password is the repo token, an API token with munki:read, a Munki enrollment secret, or a per-device token. The username is not compared for the shared repo token. A serial username selects the per-device manifest.
   parameters:
     id:
       in: path
@@ -1180,6 +1395,12 @@ components:
         managed_uninstalls:
           type: array
           items: { type: string }
+        conditional_items:
+          type: array
+          items:
+            type: object
+            properties:
+              condition: { type: string }
         managed_by: { type: string }
     ServerMeta:
       type: object
@@ -1187,6 +1408,8 @@ components:
       properties:
         config_repo: { type: string, example: Arequ/terraform-mission-control }
         config_branch: { type: string, example: main }
+        break_glass: { type: boolean, description: True when the local admin path is enabled. }
+        sso_enabled: { type: boolean, description: True when at least one OIDC provider is enabled. }
         config_links:
           type: object
           additionalProperties: { type: string, format: uri }

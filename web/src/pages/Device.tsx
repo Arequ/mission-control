@@ -102,6 +102,7 @@ function DeviceOverview({ device }: { device: Device }) {
         <Fact k="osquery" v={device.osquery_version || "—"} />
         <Fact k="Labels" v={device.labels?.length ? device.labels.join(", ") : "None"} />
       </div>
+      {device.munki ? <MunkiCard card={device.munki} /> : null}
       <section className="card">
         <div className="card-h"><span className="card-t">Recent changes</span></div>
         {(device.events ?? []).length === 0 ? <Empty>No changes recorded yet.</Empty> : (
@@ -117,6 +118,27 @@ function DeviceOverview({ device }: { device: Device }) {
         )}
       </section>
     </>
+  );
+}
+
+function MunkiCard({ card }: { card: NonNullable<Device["munki"]> }) {
+  const when = card.last_run_end || card.last_run_start;
+  return (
+    <section className="card enter" style={enterStyle(1)}>
+      <div className="card-h">
+        <span className="card-t">Munki</span>
+        <StatusPill status={card.status === "ok" ? "online" : card.status === "error" ? "offline" : "pending"} />
+      </div>
+      <div className="facts">
+        <Fact k="Last run" v={when ? ago(when) : "—"} />
+        <Fact k="Status" v={card.status || "—"} />
+        <Fact k="Pending" v={String(card.pending ?? 0)} />
+        <Fact k="Errors" v={card.errors?.length ? String(card.errors.length) : "None"} />
+        <Fact k="Version" v={card.munki_version || "—"} />
+        <Fact k="Console" v={card.console_user || "—"} />
+      </div>
+      {card.errors?.length ? <p className="note pad">{card.errors[0]}</p> : null}
+    </section>
   );
 }
 

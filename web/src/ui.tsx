@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { flushSync } from "react-dom";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { api, clearToken } from "./api";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { api, type SessionUser } from "./api";
 import { acceptMeta, FALLBACK_META, type ConfigKind, type ServerMeta } from "./configLinks";
 import { Icon, type IconName } from "./icons";
 
@@ -12,6 +12,15 @@ type ThemeCtx = { theme: Theme; setTheme: (next: Theme) => void };
 const ThemeContext = createContext<ThemeCtx>({ theme: "light", setTheme: () => {} });
 const SearchContext = createContext({ q: "", setQ: (_value: string) => { void _value; } });
 const MetaContext = createContext<ServerMeta>(FALLBACK_META);
+const SessionContext = createContext<SessionUser | null>(null);
+
+export function SessionProvider({ user, children }: { user: SessionUser; children: ReactNode }) {
+  return <SessionContext.Provider value={user}>{children}</SessionContext.Provider>;
+}
+
+export function useSession() {
+  return useContext(SessionContext);
+}
 
 export function useServerMeta() {
   return useContext(MetaContext);
@@ -153,7 +162,7 @@ export function Layout() {
           >
             <Icon name={theme === "dark" ? "moon" : "sun"} size={15} />
           </button>
-          <NavLink to="/settings" className="avatar" aria-label="Settings">MC</NavLink>
+          <UserMenu />
         </div>
       </header>
       <aside className="sidebar">
@@ -378,17 +387,32 @@ function pretty(value: string) {
 }
 
 export function SignOut() {
-  const navigate = useNavigate();
   return (
-    <button
-      className="capsule"
-      type="button"
-      onClick={() => {
-        clearToken();
-        navigate(0);
-      }}
-    >
+    <button className="capsule" type="button" onClick={() => { void api.signOut(); }}>
       Sign out
     </button>
+  );
+}
+
+function UserMenu() {
+  const user = useSession();
+  const [open, setOpen] = useState(false);
+  const initials = (user?.name || user?.email || "MC").slice(0, 2).toUpperCase();
+  return (
+    <div className="user-menu">
+      <button className="avatar" type="button" aria-label="Account" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        {initials}
+      </button>
+      {open ? (
+        <div className="user-pop" role="menu">
+          <div className="user-id">
+            <b>{user?.name || "Signed in"}</b>
+            <span>{user?.email}</span>
+            <span className="role">{user?.role}</span>
+          </div>
+          <SignOut />
+        </div>
+      ) : null}
+    </div>
   );
 }

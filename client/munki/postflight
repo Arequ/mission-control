@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Munki postflight. Posts ManagedInstallReport.plist to Mission Control.
+
+Munki runs this with its bundled Python 3. Configuration is read from
+/Library/Managed Installs/missioncontrol.json (mode 0600):
+
+    {"server": "https://mc.example", "token": "<enrollment or device token>"}
+
+The token is not baked into the package. AdditionalHttpHeaders on the Munki
+repo still uses the same token for SoftwareRepoURL.
+"""
+import gzip
+import json
+import os
+import ssl
+import sys
+import urllib.error
+import urllib.request
+import uuid
+
+CONFIG = "/Library/Managed Installs/missioncontrol.json"
+REPORT = "/Library/Managed Installs/ManagedInstallReport.plist"
+INSTALLINFO = "/Library/Managed Installs/InstallInfo.plist"
+
+
+def main() -> int:
+    try:
+        with open(CONFIG, "r", encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except OSError:
+        return 0
+    server = str(cfg.get("server", "")).rstrip("/")
+    token = str(cfg.get("token", ""))
+    if not server or not token:
+        return 0
+    try:
+        with open(REPORT, "rb") as fh:
+            report = fh.read()
+    except OSError:
+        return 0
+    body = gzip.compress(report)
+    req = urllib.request.Request(
+        server + "/munki/checkin",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/xml",
+            "Content-Encoding": "gzip",
+            "Idempotency-Key": uuid.uuid4().hex,
+        },
+    )
+    if os.path.isfile(INSTALLINFO):
+        # A second check-in is unnecessary. The server accepts multipart when
+        # both plists are posted together; this script sends the report only
+        # unless MISSIONCONTROL_INSTALLINFO=1.
+        if os.environ.get("MISSIONCONTROL_INSTALLINFO") == "1":
+            boundary = "mc" + uuid.uuid4().hex
+            info = open(INSTALLINFO, "rb").read()
+            chunks = []
+            for name, payload in (("report", report), ("installinfo", info)):
+                chunks.append(("--" + boundary + "\r\n").encode())
+                chunks.append(
+                    ('Content-Disposition: form-data; name="%s"; filename="%s.plist"\r\n'
+                     "Content-Type: application/xml\r\n\r\n" % (name, name)).encode()
+                )
+                chunks.append(payload)
+                chunks.append(b"\r\n")
+            chunks.append(("--" + boundary + "--\r\n").encode())
+            raw = b"".join(chunks)
+            req = urllib.request.Request(
+                server + "/munki/checkin",
+                data=gzip.compress(raw),
+                method="POST",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "Content-Type": "multipart/form-data; boundary=" + boundary,
+                    "Content-Encoding": "gzip",
+                    "Idempotency-Key": uuid.uuid4().hex,
+                },
+            )
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, context=ctx, timeout=30) as res:
+            res.read()
+    except urllib.error.HTTPError:
+        return 1
+    except urllib.error.URLError:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

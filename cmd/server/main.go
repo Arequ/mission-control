@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -88,18 +89,24 @@ func main() {
 		log.Info("osquery results forwarding to elastic", "index", cfg.ElasticIndex)
 	}
 	srv := httpapi.New(httpapi.Options{
-		Store:             st,
-		Blobs:             blobs,
-		Logger:            log,
-		WebDir:            cfg.WebDir,
-		RepoToken:         cfg.RepoToken,
-		DevCORS:           cfg.DevCORS,
-		OfflineAfter:      cfg.OfflineAfter,
-		MaxUpload:         cfg.MaxUploadBytes,
-		InventoryInterval: cfg.InventoryInterval,
-		Forwarder:         sink,
-		LogRetention:      cfg.LogRetention,
-		ConfigRepo:        configrepo.Repo{Slug: cfg.ConfigRepo, Branch: cfg.ConfigBranch},
+		Store:              st,
+		Blobs:              blobs,
+		Logger:             log,
+		WebDir:             cfg.WebDir,
+		RepoToken:          cfg.RepoToken,
+		DevCORS:            cfg.DevCORS,
+		OfflineAfter:       cfg.OfflineAfter,
+		MaxUpload:          cfg.MaxUploadBytes,
+		InventoryInterval:  cfg.InventoryInterval,
+		Forwarder:          sink,
+		LogRetention:       cfg.LogRetention,
+		ConfigRepo:         configrepo.Repo{Slug: cfg.ConfigRepo, Branch: cfg.ConfigBranch},
+		PublicURL:          cfg.PublicURL,
+		CookieSecure:       cfg.CookieSecure,
+		SessionIdle:        cfg.SessionIdle,
+		SessionAbsolute:    cfg.SessionAbsolute,
+		BreakGlass:         cfg.BreakGlass,
+		BreakGlassPassword: cfg.BreakGlassPassword,
 	})
 	if err := srv.Tick(ctx); err != nil {
 		log.Error("initial scheduler tick", "err", err)
@@ -124,12 +131,33 @@ func main() {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	var tlsServer *http.Server
+	if cfg.TLSCert != "" {
+		tlsServer = &http.Server{
+			Addr:              cfg.TLSAddr,
+			Handler:           srv.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12},
+		}
+	}
 	go func() {
 		<-ctx.Done()
 		shctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = httpServer.Shutdown(shctx)
+		if tlsServer != nil {
+			_ = tlsServer.Shutdown(shctx)
+		}
 	}()
+	if tlsServer != nil {
+		go func() {
+			log.Info("tls listening", "addr", cfg.TLSAddr)
+			if err := tlsServer.ListenAndServeTLS(cfg.TLSCert, cfg.TLSKey); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("tls", "err", err)
+				os.Exit(1)
+			}
+		}()
+	}
 	log.Info("listening", "addr", cfg.HTTPAddr, "storage", cfg.StorageDriver)
 	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Error("http", "err", err)

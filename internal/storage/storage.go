@@ -3,13 +3,17 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
@@ -18,11 +22,24 @@ import (
 // ErrNotFound is returned when an object does not exist.
 var ErrNotFound = errors.New("object not found")
 
+// Info describes a stored object.
+type Info struct {
+	Size    int64
+	ModTime time.Time
+	ETag    string
+}
+
+// ErrNoPresign means the backend serves bytes itself.
+var ErrNoPresign = errors.New("presign unsupported")
+
 // Storage is the package blob backend.
 type Storage interface {
 	Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
 	Delete(ctx context.Context, key string) error
+	Stat(ctx context.Context, key string) (Info, error)
+	// Presign returns a time-limited GET URL. Local storage returns ErrNoPresign.
+	Presign(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
 
 // New returns the configured backend.
@@ -125,6 +142,29 @@ func (l *Local) Delete(_ context.Context, key string) error {
 	return err
 }
 
+func (l *Local) Stat(_ context.Context, key string) (Info, error) {
+	full, err := l.path(key)
+	if err != nil {
+		return Info{}, err
+	}
+	st, err := os.Stat(full)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Info{}, ErrNotFound
+		}
+		return Info{}, err
+	}
+	if st.IsDir() {
+		return Info{}, ErrNotFound
+	}
+	sum := sha256.Sum256([]byte(strconv.FormatInt(st.Size(), 10) + ":" + strconv.FormatInt(st.ModTime().UnixNano(), 10)))
+	return Info{Size: st.Size(), ModTime: st.ModTime().UTC(), ETag: `"` + hex.EncodeToString(sum[:]) + `"`}, nil
+}
+
+func (l *Local) Presign(context.Context, string, time.Duration) (string, error) {
+	return "", ErrNoPresign
+}
+
 // S3 stores objects in an S3-compatible bucket.
 type S3 struct {
 	client *minio.Client
@@ -216,4 +256,37 @@ func (s *S3) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return s.client.RemoveObject(ctx, s.bucket, key, minio.RemoveObjectOptions{})
+}
+
+func (s *S3) Stat(ctx context.Context, key string) (Info, error) {
+	if err := ValidateKey(key); err != nil {
+		return Info{}, err
+	}
+	st, err := s.client.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
+	if err != nil {
+		resp := minio.ToErrorResponse(err)
+		if resp.Code == "NoSuchKey" || resp.StatusCode == 404 {
+			return Info{}, ErrNotFound
+		}
+		return Info{}, err
+	}
+	etag := st.ETag
+	if etag != "" && !strings.HasPrefix(etag, `"`) {
+		etag = `"` + etag + `"`
+	}
+	return Info{Size: st.Size, ModTime: st.LastModified.UTC(), ETag: etag}, nil
+}
+
+func (s *S3) Presign(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if err := ValidateKey(key); err != nil {
+		return "", err
+	}
+	if ttl <= 0 {
+		ttl = 15 * time.Minute
+	}
+	u, err := s.client.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
+	if err != nil {
+		return "", err
+	}
+	return u.String(), nil
 }

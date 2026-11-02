@@ -1,18 +1,65 @@
 package httpapi
 
 import (
+	"context"
+	"crypto/subtle"
 	"net/http"
+	"strings"
 
 	"github.com/Arequ/mission-control/internal/auth"
+	"github.com/Arequ/mission-control/internal/model"
+	"github.com/Arequ/mission-control/internal/sso"
+	"github.com/Arequ/mission-control/internal/store"
 )
+
+type munkiAuthKey struct{}
+
+func withMunkiAuth(ctx context.Context, a store.MunkiAuth) context.Context {
+	return context.WithValue(ctx, munkiAuthKey{}, a)
+}
+
+func munkiAuthFrom(r *http.Request) store.MunkiAuth {
+	a, _ := r.Context().Value(munkiAuthKey{}).(store.MunkiAuth)
+	return a
+}
 
 func (s *Server) withAPI(scope string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw := auth.Bearer(r.Header.Get("Authorization"))
-		p, err := s.store.LookupAPIToken(r.Context(), raw)
+		// A present Authorization header is exclusive. A bad bearer does not
+		// fall through to a session cookie.
+		if r.Header.Get("Authorization") != "" {
+			raw := auth.Bearer(r.Header.Get("Authorization"))
+			p, err := s.store.LookupAPIToken(r.Context(), raw)
+			if err != nil {
+				writeJSON(w, http.StatusUnauthorized, errBody{"unauthorized"})
+				return
+			}
+			if scope != "" && !p.Allows(scope) {
+				writeJSON(w, http.StatusForbidden, errBody{"forbidden"})
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
+			return
+		}
+		raw, err := r.Cookie(sessionCookie)
+		if err != nil || strings.TrimSpace(raw.Value) == "" {
+			writeJSON(w, http.StatusUnauthorized, errBody{"unauthorized"})
+			return
+		}
+		rec, err := s.store.LookupSession(r.Context(), raw.Value, s.sessionIdle)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, errBody{"unauthorized"})
 			return
+		}
+		if mutating(r.Method) && !csrfOK(r, rec.CSRF) {
+			writeJSON(w, http.StatusForbidden, errBody{"csrf"})
+			return
+		}
+		p := model.Principal{
+			Kind:   "session",
+			ID:     auth.Hash(raw.Value),
+			Name:   rec.Email,
+			Scopes: sso.ScopesForRole(rec.Role),
 		}
 		if scope != "" && !p.Allows(scope) {
 			writeJSON(w, http.StatusForbidden, errBody{"forbidden"})
@@ -20,6 +67,23 @@ func (s *Server) withAPI(scope string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(withPrincipal(r.Context(), p)))
 	})
+}
+
+func mutating(method string) bool {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
+func csrfOK(r *http.Request, want string) bool {
+	got := r.Header.Get(csrfHeader)
+	if want == "" || len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // TerraformClientHeader is sent by terraform-provider-missioncontrol on every request.
@@ -68,13 +132,35 @@ func (s *Server) withRunner(next http.Handler) http.Handler {
 
 func (s *Server) withRepo(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.repoOK(r) {
-			next.ServeHTTP(w, r)
+		user, secret, creds := repoCredentials(r)
+		var authn store.MunkiAuth
+		if creds {
+			got, ok, err := s.store.AuthenticateMunki(r.Context(), user, secret)
+			if err != nil {
+				s.writeStoreErr(w, err)
+				return
+			}
+			if ok {
+				authn = got
+			}
+		}
+		if s.repoOK(r) || authn.EnrollmentID != "" || authn.Serial != "" {
+			next.ServeHTTP(w, r.WithContext(withMunkiAuth(r.Context(), authn)))
 			return
 		}
 		w.Header().Set("WWW-Authenticate", `Basic realm="mission-control"`)
 		writeJSON(w, http.StatusUnauthorized, errBody{"unauthorized"})
 	})
+}
+
+func repoCredentials(r *http.Request) (user, secret string, ok bool) {
+	if u, p, basic := r.BasicAuth(); basic {
+		return u, p, true
+	}
+	if raw := auth.Bearer(r.Header.Get("Authorization")); raw != "" {
+		return "", raw, true
+	}
+	return "", "", false
 }
 
 func (s *Server) repoOK(r *http.Request) bool {
