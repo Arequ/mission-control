@@ -1,0 +1,8 @@
+{
+  "parent_recipes": [
+    {
+      "identifier": "com.github.autopkg.recipes.munki.Firefox",
+      "sha256": "abc123placeholder"
+    }
+  ]
+}
