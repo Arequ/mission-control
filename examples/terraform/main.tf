@@ -58,3 +58,44 @@ resource "missioncontrol_manifest" "testing" {
   catalogs         = ["testing", "production"]
   managed_installs = ["Firefox"]
 }
+
+resource "missioncontrol_osquery_enroll_secret" "fleet" {
+  name    = "fleet"
+  secret  = var.enroll_secret
+  enabled = true
+}
+
+resource "missioncontrol_osquery_label" "apple_silicon" {
+  name        = "apple-silicon"
+  description = "Apple silicon Macs"
+  kind        = "dynamic"
+  platform    = "darwin"
+  sql         = "SELECT 1 FROM system_info WHERE cpu_type = 'arm64e' OR cpu_brand LIKE '%Apple%';"
+}
+
+resource "missioncontrol_osquery_label" "canaries" {
+  name        = "canaries"
+  description = "Machines that receive a change first"
+  kind        = "manual"
+  serials     = []
+}
+
+resource "missioncontrol_osquery_query" "launch_daemons" {
+  name        = "launch_daemons"
+  description = "Third-party launch daemons"
+  sql         = "SELECT name, path, program FROM launchd WHERE path LIKE '/Library/LaunchDaemons/%';"
+  platform    = "darwin"
+  interval    = 3600
+  snapshot    = false
+  removed     = true
+  scheduled   = false
+}
+
+resource "missioncontrol_osquery_pack" "endpoint" {
+  name        = "endpoint"
+  description = "Endpoint checks for Apple silicon Macs"
+  platform    = "darwin"
+  labels      = [missioncontrol_osquery_label.apple_silicon.name]
+  query_ids   = [missioncontrol_osquery_query.launch_daemons.id]
+  enabled     = true
+}

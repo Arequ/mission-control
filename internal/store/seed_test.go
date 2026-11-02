@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Arequ/mission-control/internal/model"
 	"github.com/Arequ/mission-control/internal/testutil"
 )
 
@@ -69,5 +70,28 @@ func TestSeedDemoIsRealisticAndIdempotent(t *testing.T) {
 	n, err := s.PromoteDue(ctx)
 	if err != nil || n != 0 {
 		t.Fatalf("seed promoted immediately n=%d err=%v", n, err)
+	}
+	devices, total, err := s.ListDevices(ctx, model.DeviceListFilter{Limit: 100, OfflineAfter: 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 40 || len(devices) != 40 {
+		t.Fatalf("devices total=%d len=%d", total, len(devices))
+	}
+	fleetOnline := 0
+	for _, d := range devices {
+		if d.Status == "online" {
+			fleetOnline++
+		}
+		if d.Platform != "darwin" || d.OSDisplay == "" {
+			t.Fatalf("device %+v", d)
+		}
+	}
+	if fleetOnline < 30 || fleetOnline == 40 {
+		t.Fatalf("expected a mostly-online fleet with a few offline, online=%d", fleetOnline)
+	}
+	labels, err := s.ListOsqueryLabels(ctx)
+	if err != nil || len(labels) < 2 {
+		t.Fatalf("labels %#v %v", labels, err)
 	}
 }

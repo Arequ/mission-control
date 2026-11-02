@@ -166,6 +166,173 @@ func TestTerraformProviderCRUD(t *testing.T) {
 		t.Fatalf("imported schedule drifted: %v\n%s", err, out)
 	}
 
+	queries := apiGet(t, ts.URL, "/api/v1/osquery/queries")
+	if !strings.Contains(queries, "launch_daemons") || !strings.Contains(queries, `"managed_by":"terraform"`) && !strings.Contains(queries, `"managed_by": "terraform"`) {
+		t.Fatalf("queries: %s", queries)
+	}
+	if !strings.Contains(apiGet(t, ts.URL, "/api/v1/osquery/packs"), "endpoint") || !strings.Contains(apiGet(t, ts.URL, "/api/v1/osquery/labels"), "apple-silicon") {
+		t.Fatal(apiGet(t, ts.URL, "/api/v1/osquery/packs"))
+	}
+	secrets := apiGet(t, ts.URL, "/api/v1/osquery/enroll-secrets")
+	if !strings.Contains(secrets, "fleet") || strings.Contains(secrets, "example-enroll-secret") {
+		t.Fatalf("enroll secrets: %s", secrets)
+	}
+	var listedQ struct {
+		Queries []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"queries"`
+	}
+	if err := json.Unmarshal([]byte(queries), &listedQ); err != nil {
+		t.Fatal(err)
+	}
+	var queryID string
+	for _, q := range listedQ.Queries {
+		if q.Name == "launch_daemons" {
+			queryID = q.ID
+		}
+	}
+	if queryID == "" {
+		t.Fatal("launch_daemons missing")
+	}
+	nodeKey := enrollOsquery(t, ts.URL, "example-enroll-secret", "UUID-TF", "SER-TF")
+	postJSON(t, ts.URL, "/logger", `{"node_key":"`+nodeKey+`","log_type":"result","data":[{"name":"mc_label_apple-silicon","snapshot":[{"1":"1"}]}]}`)
+	cfg := postJSON(t, ts.URL, "/config", `{"node_key":"`+nodeKey+`"}`)
+	if !strings.Contains(cfg, "launch_daemons") || !strings.Contains(cfg, `"endpoint"`) {
+		t.Fatalf("terraform pack did not reach agent config: %s", cfg)
+	}
+
+	run("state", "rm", "missioncontrol_osquery_query.launch_daemons")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_query.launch_daemons", queryID)
+	importedQuery := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = importedQuery.CombinedOutput()
+	if err != nil {
+		t.Fatalf("imported query drifted: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
+
+	var listedPacks struct {
+		Packs []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"packs"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/osquery/packs")), &listedPacks); err != nil {
+		t.Fatal(err)
+	}
+	var packID string
+	for _, pack := range listedPacks.Packs {
+		if pack.Name == "endpoint" {
+			packID = pack.ID
+		}
+	}
+	if packID == "" {
+		t.Fatal("endpoint pack missing")
+	}
+	var listedLabels struct {
+		Labels []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"labels"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/osquery/labels")), &listedLabels); err != nil {
+		t.Fatal(err)
+	}
+	var labelID string
+	for _, label := range listedLabels.Labels {
+		if label.Name == "apple-silicon" {
+			labelID = label.ID
+		}
+	}
+	if labelID == "" {
+		t.Fatal("apple-silicon label missing")
+	}
+	var listedSecrets struct {
+		Secrets []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"enroll_secrets"`
+	}
+	if err := json.Unmarshal([]byte(apiGet(t, ts.URL, "/api/v1/osquery/enroll-secrets")), &listedSecrets); err != nil {
+		t.Fatal(err)
+	}
+	var secretID string
+	for _, secret := range listedSecrets.Secrets {
+		if secret.Name == "fleet" {
+			secretID = secret.ID
+		}
+	}
+	if secretID == "" {
+		t.Fatal("fleet enroll secret missing")
+	}
+	run("state", "rm", "missioncontrol_osquery_pack.endpoint")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_pack.endpoint", packID)
+	run("state", "rm", "missioncontrol_osquery_label.apple_silicon")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_label.apple_silicon", labelID)
+	rotated := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"-var", "enroll_secret=rotated-enroll-secret-value")
+	rotOut, rotErr := rotated.CombinedOutput()
+	if strings.Contains(string(rotOut), "example-enroll-secret") || strings.Contains(string(rotOut), "rotated-enroll-secret-value") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", rotOut)
+	}
+	if !errors.As(rotErr, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("enroll secret rotation should plan with exit 2, err=%v\n%s", rotErr, rotOut)
+	}
+	importedPackLabel := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = importedPackLabel.CombinedOutput()
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
+	if err != nil {
+		t.Fatalf("imported pack or label drifted: %v\n%s", err, out)
+	}
+	run("state", "rm", "missioncontrol_osquery_enroll_secret.fleet")
+	run("import", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3",
+		"missioncontrol_osquery_enroll_secret.fleet", secretID)
+	importedRest := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	out, err = importedRest.CombinedOutput()
+	if strings.Contains(string(out), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", out)
+	}
+	if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(string(out), "(sensitive value)") {
+		t.Fatalf("imported enroll secret should plan a redacted update, err=%v\n%s", err, out)
+	}
+
+	if _, err := st.Pool().Exec(ctx, `UPDATE osquery_queries SET sql='SELECT 1' WHERE name='launch_daemons'`); err != nil {
+		t.Fatal(err)
+	}
+	driftedQuery := terraformCmd(t, work, tfrc, "plan", "-detailed-exitcode", "-input=false",
+		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4", "-var", "soak_days=3")
+	driftOut, driftErr = driftedQuery.CombinedOutput()
+	if !errors.As(driftErr, &exit) || exit.ExitCode() != 2 {
+		t.Fatalf("query drift should plan with exit 2, err=%v\n%s", driftErr, driftOut)
+	}
+	if strings.Contains(string(driftOut), "example-enroll-secret") {
+		t.Fatalf("enroll secret leaked in plan:\n%s", driftOut)
+	}
+
 	run("destroy", "-auto-approve", "-input=false",
 		"-var", "endpoint="+ts.URL, "-var", "token=mc_tf_admin",
 		"-var", "max_concurrency=4", "-var", "soak_days=3")
@@ -178,6 +345,9 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	}
 	if len(body.Recipes) != 0 {
 		t.Fatalf("recipes remain: %s", left)
+	}
+	if strings.Contains(apiGet(t, ts.URL, "/api/v1/osquery/queries"), "launch_daemons") {
+		t.Fatal("osquery query survived destroy")
 	}
 	settings = apiGet(t, ts.URL, "/api/v1/pipeline-settings")
 	if !strings.Contains(settings, `"max_concurrency":4`) && !strings.Contains(settings, `"max_concurrency": 4`) {
@@ -194,6 +364,37 @@ func terraformCmd(t *testing.T, work, tfrc string, args ...string) *exec.Cmd {
 	c.Dir = work
 	c.Env = append(os.Environ(), "TF_CLI_CONFIG_FILE="+tfrc, "TF_IN_AUTOMATION=1", "TF_INPUT=0", "CHECKPOINT_DISABLE=1")
 	return c
+}
+
+func enrollOsquery(t *testing.T, base, secret, uuid, serial string) string {
+	t.Helper()
+	body := postJSON(t, base, "/enroll", `{"enroll_secret":"`+secret+`","host_identifier":"tf-host","host_details":{"system_info":{"uuid":"`+uuid+`","hardware_serial":"`+serial+`","hostname":"tf-host"},"os_version":{"platform":"darwin","version":"26.1"}}}`)
+	var out struct {
+		NodeKey string `json:"node_key"`
+	}
+	if err := json.Unmarshal([]byte(body), &out); err != nil || out.NodeKey == "" {
+		t.Fatalf("enroll: %s", body)
+	}
+	return out.NodeKey
+}
+
+func postJSON(t *testing.T, base, path, body string) string {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, base+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 300 {
+		t.Fatalf("POST %s %d %s", path, res.StatusCode, b)
+	}
+	return string(b)
 }
 
 func apiGet(t *testing.T, base, path string) string {

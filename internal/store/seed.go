@@ -17,7 +17,7 @@ func (s *Store) SeedDemo(ctx context.Context) error {
 		return err
 	}
 	if n > 0 {
-		return nil
+		return s.seedFleet(ctx)
 	}
 	p := model.Principal{Kind: "system", ID: "seed", Name: "seed"}
 	if _, err := s.UpdatePipelineSettings(ctx, p, model.PipelineSettings{
@@ -202,5 +202,5 @@ func (s *Store) SeedDemo(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `UPDATE runners SET last_heartbeat_at=$2 WHERE id=$1`, mini2.ID, now.Add(-3*time.Hour)); err != nil {
 		return err
 	}
-	return nil
+	return s.seedFleet(ctx)
 }

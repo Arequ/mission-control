@@ -49,7 +49,10 @@ export function Providers({ children }: { children: ReactNode }) {
 function section(path: string) {
   if (path.startsWith("/munki")) return "munki";
   if (path.startsWith("/settings")) return "settings";
-  return "autopkg";
+  if (path.startsWith("/devices")) return "devices";
+  if (path.startsWith("/queries")) return "queries";
+  if (path.startsWith("/autopkg") || path.startsWith("/runs") || path.startsWith("/runners")) return "autopkg";
+  return "overview";
 }
 
 export function Layout() {
@@ -59,7 +62,7 @@ export function Layout() {
   const active = section(pathname);
   const [y, setY] = useState(0);
   const [ready, setReady] = useState(false);
-  const [counts, setCounts] = useState({ recipes: 0, packages: 0 });
+  const [counts, setCounts] = useState({ recipes: 0, packages: 0, devices: 0 });
   const [apiOk, setApiOk] = useState(true);
 
   useLayoutEffect(() => {
@@ -81,13 +84,12 @@ export function Layout() {
   useEffect(() => {
     let stop = false;
     const load = () => {
-      Promise.all([api.recipes(), api.packages(), fetch("/healthz")])
-        .then(([recipes, packages, health]) => {
-          if (stop) return;
-          setCounts({ recipes: recipes.recipes.length, packages: packages.packages.length });
-          setApiOk(health.ok);
-        })
+      fetch("/healthz")
+        .then((health) => { if (!stop) setApiOk(health.ok); })
         .catch(() => { if (!stop) setApiOk(false); });
+      api.recipes().then((recipes) => { if (!stop) setCounts((c) => ({ ...c, recipes: recipes.recipes.length })); }).catch(() => {});
+      api.packages().then((packages) => { if (!stop) setCounts((c) => ({ ...c, packages: packages.packages.length })); }).catch(() => {});
+      api.summary().then((summary) => { if (!stop) setCounts((c) => ({ ...c, devices: summary.total_devices })); }).catch(() => {});
     };
     load();
     const t = setInterval(load, 8000);
@@ -110,7 +112,7 @@ export function Layout() {
             <input
               value={q}
               onChange={(event) => setQ(event.target.value)}
-              placeholder="Search recipes, runs, packages…"
+              placeholder="Search devices, software, recipes…"
               aria-label="Search"
             />
             {q ? <button className="kbd" type="button" onClick={() => setQ("")} aria-label="Clear search">Clear</button> : null}
@@ -131,9 +133,13 @@ export function Layout() {
       </header>
       <aside className="sidebar">
         <nav className="side-nav">
-          <div className="side-h">Software</div>
+          <div className="side-h">Fleet</div>
+          <SideLink id="overview" to="/" icon="layout" label="Overview" active={active === "overview"} end />
+          <SideLink id="devices" to="/devices" icon="laptop" label="Devices" count={counts.devices ? String(counts.devices) : ""} active={active === "devices"} />
+          <SideLink id="queries" to="/queries" icon="terminal" label="Queries" active={active === "queries"} />
+          <div className="side-h" style={{ marginTop: 14 }}>Software</div>
           <SideLink id="munki" to="/munki" icon="package" label="Munki" count={counts.packages ? String(counts.packages) : ""} active={active === "munki"} />
-          <SideLink id="autopkg" to="/" icon="workflow" label="AutoPKG" count={counts.recipes ? String(counts.recipes) : ""} active={active === "autopkg"} end />
+          <SideLink id="autopkg" to="/autopkg" icon="workflow" label="AutoPKG" count={counts.recipes ? String(counts.recipes) : ""} active={active === "autopkg"} />
           <div className="side-gap" />
           <SideLink id="settings" to="/settings" icon="settings" label="Settings" active={active === "settings"} />
           <div className="side-status">
@@ -186,7 +192,7 @@ export function Toolbar({ title, lede, badge, extra }: {
 }
 
 const autopkgSeg = [
-  { to: "/", label: "Recipes", on: (p: string) => p === "/" },
+  { to: "/autopkg", label: "Recipes", on: (p: string) => p === "/autopkg" },
   { to: "/runs", label: "Runs", on: (p: string) => p === "/runs" || p.startsWith("/runs/") },
   { to: "/runners", label: "Runners", on: (p: string) => p.startsWith("/runners") },
 ];
@@ -232,6 +238,10 @@ const tone: Record<string, { kind: string; icon?: IconName; live?: boolean }> = 
   succeeded: { kind: "green", icon: "check" },
   online: { kind: "green", live: true },
   offline: { kind: "red" },
+  timeout: { kind: "orange", icon: "alert" },
+  pending: { kind: "gray" },
+  sent: { kind: "teal", live: true },
+  complete: { kind: "green", icon: "check" },
 };
 
 export function StatusPill({ status, result }: { status?: string; result?: string }) {
@@ -260,6 +270,33 @@ export function Mark({ name }: { name: string }) {
       {letter}
     </span>
   );
+}
+
+export function ago(value?: string) {
+  if (!value) return "never";
+  const ms = Date.now() - new Date(value).getTime();
+  if (Number.isNaN(ms)) return value;
+  if (ms < 45_000) return "just now";
+  const min = Math.round(ms / 60000);
+  if (min < 60) return `${min}m ago`;
+  const hours = Math.round(min / 60);
+  if (hours < 36) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  return `${days}d ago`;
+}
+
+export function gigabytes(bytes: number) {
+  if (!bytes) return "—";
+  const gb = bytes / 1024 ** 3;
+  return `${Math.round(gb)} GB`;
+}
+
+export function uptime(seconds: number) {
+  if (!seconds) return "—";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  return `${hours}h`;
 }
 
 export function when(value?: string) {

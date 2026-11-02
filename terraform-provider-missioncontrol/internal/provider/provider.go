@@ -84,6 +84,10 @@ func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
 		newPromotionRuleResource,
 		newRunnerPoolResource,
 		newManifestResource,
+		newOsqueryQueryResource,
+		newOsqueryPackResource,
+		newOsqueryLabelResource,
+		newEnrollSecretResource,
 	}
 }
 

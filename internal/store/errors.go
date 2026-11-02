@@ -16,6 +16,9 @@ var ErrConflict = errors.New("conflict")
 // ErrForbidden means the caller does not own the resource.
 var ErrForbidden = errors.New("forbidden")
 
+// ErrEnrollRejected means the enroll secret did not match an enabled secret.
+var ErrEnrollRejected = errors.New("enroll secret rejected")
+
 // ValidationError is a rejected request.
 type ValidationError struct{ Msg string }
 
