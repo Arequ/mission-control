@@ -1,6 +1,6 @@
 # Mission Control
 
-Mission Control is the API-first control plane for a Mac fleet: Munki and AutoPkg, osquery, a unified device page, security coverage, predefined log views, and a vulnerability issue list. Humans and agents should be able to launch it and change it from this file.
+Mission Control is the API-first control plane for a Mac fleet: Munki and AutoPkg, osquery, Keel configuration reports, a unified device page, security coverage, predefined log views, and a vulnerability issue list. Humans and agents should be able to launch it and change it from this file.
 
 ## How to launch it
 
@@ -27,7 +27,7 @@ Sign in as `ava@example.com` / `example-oidc-password`. Dex static passwords do 
 | 9200 | Elasticsearch 8.15, security disabled |
 | 5556 | Dex. Issuer `http://dex:5556/dex` |
 
-Placeholders, not production secrets: `mc_dev_admin_token`, `mc_dev_bootstrap_token`, `mc_dev_repo_token`, `example-enroll-secret`, `example-oidc-client-secret`, `example-oidc-password`, `example-munki-enrollment-secret`. Terraform and curl keep using `Authorization: Bearer mc_dev_admin_token`.
+Placeholders, not production secrets: `mc_dev_admin_token`, `mc_dev_bootstrap_token`, `mc_dev_repo_token`, `example-enroll-secret`, `example-oidc-client-secret`, `example-oidc-password`, `example-munki-enrollment-secret`, `example-keel-enroll-secret`. Terraform and curl keep using `Authorization: Bearer mc_dev_admin_token`.
 
 `docker compose --profile runner up --build` also starts a fake AutoPkg runner. It idles until a recipe and a job exist.
 
@@ -90,6 +90,7 @@ Enroll a Mac. Compose verifies the server side with a real `osqueryd` container 
 
 - osqueryd needs a TLS hostname, `--tls_server_certs`, `--enroll_secret_path`, `--config_plugin=tls`, `--logger_plugin=tls`, `--distributed_plugin=tls`, `--disable_distributed=false`, and the endpoints `/enroll`, `/config`, `/logger`, `/distributed_read`, `/distributed_write`. The secret file is the value of `missioncontrol_osquery_enroll_secret`. Terminate TLS at the ingress, or set `MC_TLS_CERT` and `MC_TLS_KEY` and publish `MC_TLS_ADDR` (compose uses `:8443`).
 - Munki `SoftwareRepoURL` is `https://<host>/repo`. Send `Authorization` via `AdditionalHttpHeaders` (Basic username `munki` and the enrollment secret, or Basic username = serial and the derived device token). `client/munki/build-pkg.sh` builds the preflight and postflight package on macOS. `pkgbuild` does not exist on Linux, so that script was not run here. The postflight posts `ManagedInstallReport.plist` to `POST /munki/checkin`. See `client/munki/README.md`.
+- Keel enrolls once with `POST /api/v1/keel/enroll` (`Authorization: Bearer` the `missioncontrol_keel_enroll_secret` value, which reaches the Mac as the `KEEL_ENROLL_SECRET` data bag) and a body of serial, hostname, and a base64 Ed25519 public key. Every run then posts a signed `keel.report/v1` body to `POST /api/v1/keel/report`. `client/keel` is a reference client and documents the signed message. Keel itself is built in another repo. A real Mac was not enrolled from here.
 - AutoPkg runs on the Mac through `mc-runner` (`--server`, `--bootstrap-token`, `--pool`, `--labels`, `--autopkg autopkg`, `--sync-repos`). Runners only make outbound calls.
 
 ## What it is
@@ -116,6 +117,8 @@ One Go process serves `/api/v1`, the Munki `/repo`, the osquery TLS routes, and 
 | `internal/sso` | OIDC authorization code, PKCE, role mapping |
 | `internal/munki` | Catalogs, manifests, check-in plist |
 | `client/munki` | Preflight, postflight, pkg build script |
+| `client/keel` | Reference Keel enroll and signed-report client |
+| `internal/keel` | Keel signature message, verification, report body |
 | `terraform-provider-missioncontrol` | Provider module |
 | `examples/terraform` | Example stack, also the provider CRUD test |
 | `web` | React UI |
@@ -132,6 +135,8 @@ One Go process serves `/api/v1`, the Munki `/repo`, the osquery TLS routes, and 
 **Munki check-in.** Munki has no check-in protocol. `/repo` serves catalogs, manifests, pkgsinfo, icons, and pkgs to a client authenticated with the repo token, an enrollment secret, a per-device token, or a `munki:read` API token. Names are one path segment. Range and ETag work for local files. S3 redirects to a presigned URL. A manifest name that looks like a serial is rendered from the client override, else the enrollment manifest, else `site_default`. `POST /munki/checkin` parses `ManagedInstallReport.plist` (gzip, size caps, no entity expansion). State is stored on the device matched by serial, then hardware UUID. That row feeds the device Munki card, native Munki coverage, and vulnerability evidence.
 
 **osquery.** The historical TLS API: `/enroll`, `/config`, `/logger`, `/distributed_read`, `/distributed_write`. A bad node key returns HTTP 200 and `node_invalid: true`. Inventory queries named `mc_*` are always scheduled. Live queries are operational. The main API is HTTP. Compose adds a TLS listener on `:8443` so a real `osqueryd` can enroll.
+
+**Keel.** Keel is the Go configuration agent on the Macs. A Mac enrolls an Ed25519 public key once, trust on first use: an unknown serial is bound (201), the same key is idempotent (200), and a different key is 409 until an admin clears it (`DELETE /api/v1/keel/devices/{serial}/key`, scope `keel:admin` or `*`). The enroll secret is `missioncontrol_keel_enroll_secret`, hashed and write-only like the osquery one. Every run posts a report signed over `keel-report-v1\n<serial>\n<timestamp>\n<sha256 hex of the body>`. The server verifies the exact raw bytes, allows 300 seconds of skew, and requires a timestamp strictly after the last accepted one for that serial; the floor moves in the same transaction as the insert, so two concurrent copies of one report cannot both land. Bodies over 2 MiB are 413. TLS terminates at the ingress, so mTLS would not survive to the server; the signature is the device credential. The last 50 runs per serial are kept. The Configuration page walks roles (parent chain, device counts, enabled profiles, effective settings with variants when devices disagree) and fleet health (failing, pending in plan mode, warnings, stale over 2h). A run with a `compile: ` warning counts as failing. The device page has a Configuration tab joined by serial. Reads use `keel:read`, which viewers have. The config repo should keep the secret in `keel/enroll.tf`; that file is not in the propose-link allowlist yet, so there is no Propose change link.
 
 **Security coverage.** Eight sources: osquery, Munki, CrowdStrike, Rapid7, Netskope, Proofpoint, BlastShield, Kolide. Each is one `missioncontrol_source_connector`. osquery and Munki are native. CrowdStrike and Kolide poll their APIs. The other four read Elasticsearch. Snapshots stay per source. Strong keys are serial and hardware UUID. A cell is seen, stale, or missing.
 
@@ -166,6 +171,7 @@ Ordered by what blocks a real fleet:
 9. `deploy/k8s/server.yaml` has not been applied to a cluster from here.
 10. Propose links for SSO and Munki client auth wait on `access/sso.tf` and `munki/clients.tf` in the config repo.
 11. A Swift client is still only a roadmap note. No private endpoints.
+12. Keel: no physical Mac has enrolled against this server. The config repo needs `keel/enroll.tf` before a propose link exists. Report bodies are not audit rows (the run table is the history); enroll and key clears are.
 
 ## Pitfalls
 

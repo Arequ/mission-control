@@ -447,6 +447,101 @@ export type IssueQuery = {
   offset?: number;
 };
 
+export type KeelSummary = {
+  total: number;
+  ok: number;
+  changed: number;
+  would_change: number;
+  failed: number;
+  skipped: number;
+};
+
+export type KeelRun = {
+  run_id: string;
+  serial: string;
+  hostname: string;
+  mode: "apply" | "plan" | string;
+  keel_version: string;
+  started_at: string;
+  received_at: string;
+  duration_ms: number;
+  leaf_role: string;
+  leaf_match?: string;
+  roles: string[];
+  summary: KeelSummary;
+  warnings: string[];
+  compile_error: boolean;
+};
+
+export type KeelDevice = {
+  serial: string;
+  hostname: string;
+  device_id?: string;
+  enrolled: boolean;
+  enrolled_at?: string;
+  stale: boolean;
+  last_run?: KeelRun;
+};
+
+export type KeelResource = {
+  id: string;
+  type: string;
+  profile: string;
+  status: string;
+  message: string;
+  duration_ms: number;
+};
+
+export type KeelProfile = { name: string; enabled: boolean; settings: unknown };
+
+// The report body as Keel sent it. Unknown fields are kept and ignored.
+export type KeelReport = {
+  schema: string;
+  run_id: string;
+  keel_version?: string;
+  mode: string;
+  started_at: string;
+  duration_ms: number;
+  device: Record<string, unknown> & { serial: string; hostname?: string };
+  roles?: { name: string; parents?: string[]; match?: string }[];
+  warnings?: string[];
+  overlays?: string[];
+  facts?: Record<string, unknown>;
+  profiles?: KeelProfile[];
+  resources?: KeelResource[];
+  summary?: Partial<KeelSummary>;
+};
+
+export type KeelDeviceDetail = KeelDevice & { report: KeelReport | null };
+
+export type KeelRole = {
+  name: string;
+  parents: string[];
+  chain: string[];
+  devices: number;
+  inherited: number;
+  profiles: { name: string; devices: number }[];
+};
+
+export type KeelOverview = {
+  devices: number;
+  reporting: number;
+  stale_after_seconds: number;
+  roles: KeelRole[];
+  failed: KeelDevice[];
+  pending: KeelDevice[];
+  warned: KeelDevice[];
+  stale: KeelDevice[];
+};
+
+export type KeelRoleSettings = {
+  role: string;
+  profile: string;
+  devices: number;
+  missing: number;
+  variants: { enabled: boolean; settings: unknown; devices: number; serials: string[] }[];
+};
+
 export type SessionUser = {
   email: string;
   name: string;
@@ -578,4 +673,17 @@ export const api = {
   runVulnerabilityRecipe: (id: string) =>
     request<Job>(`/api/v1/vulnerability-issues/${id}/run-recipe`, { method: "POST" }),
   deviceVulnerabilities: (id: string) => request<{ issues: VulnerabilityIssue[] }>(`/api/v1/devices/${id}/vulnerabilities`),
+  keelOverview: () => request<KeelOverview>("/api/v1/keel/overview"),
+  keelDevices: (params: { role?: string; status?: string; q?: string } = {}) => {
+    const q = new URLSearchParams();
+    if (params.role) q.set("role", params.role);
+    if (params.status) q.set("status", params.status);
+    if (params.q) q.set("q", params.q);
+    q.set("limit", "500");
+    return request<{ devices: KeelDevice[]; total: number }>(`/api/v1/keel/devices?${q}`);
+  },
+  keelDevice: (serial: string) => request<KeelDeviceDetail>(`/api/v1/keel/devices/${encodeURIComponent(serial)}`),
+  keelRuns: (serial: string) => request<{ runs: KeelRun[] }>(`/api/v1/keel/devices/${encodeURIComponent(serial)}/runs`),
+  keelRoleSettings: (role: string, profile: string) =>
+    request<KeelRoleSettings>(`/api/v1/keel/roles/${encodeURIComponent(role)}/profiles/${encodeURIComponent(profile)}`),
 };

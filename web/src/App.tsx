@@ -5,6 +5,7 @@ import { Icon } from "./icons";
 import { AutopkgPage } from "./pages/Autopkg";
 import { DevicePage } from "./pages/Device";
 import { DevicesPage } from "./pages/Devices";
+import { ConfigurationPage } from "./pages/Configuration";
 import { ManifestsPage, MunkiPage } from "./pages/Munki";
 import { OverviewPage } from "./pages/Overview";
 import { LiveQueryPage, QueriesPage } from "./pages/Queries";
@@ -47,6 +48,8 @@ function Authed() {
         <Route path="devices/:id/software" element={<DevicePage />} />
         <Route path="devices/:id/queries" element={<DevicePage />} />
         <Route path="devices/:id/vulnerabilities" element={<DevicePage />} />
+        <Route path="devices/:id/configuration" element={<DevicePage />} />
+        <Route path="configuration" element={<ConfigurationPage />} />
         <Route path="vulnerabilities" element={<VulnerabilitiesPage />} />
         <Route path="vulnerabilities/:id" element={<VulnerabilitiesPage />} />
         <Route path="coverage" element={<CoveragePage />} />

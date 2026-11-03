@@ -2,6 +2,9 @@ package integration
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -177,8 +180,32 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if !strings.Contains(secrets, "fleet") || strings.Contains(secrets, "example-enroll-secret") {
 		t.Fatalf("enroll secrets: %s", secrets)
 	}
+	keelSecrets := apiGet(t, ts.URL, "/api/v1/keel/enroll-secrets")
+	if !strings.Contains(keelSecrets, "fleet") || strings.Contains(keelSecrets, "example-keel-enroll-secret") {
+		t.Fatalf("keel enroll secrets: %s", keelSecrets)
+	}
+	keelPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keelBody := `{"serial":"SER-KEEL-TF","hostname":"keel-tf","public_key":"` + base64.StdEncoding.EncodeToString(keelPub) + `"}`
+	for _, tc := range []struct {
+		secret string
+		want   int
+	}{{"wrong-keel-secret", http.StatusUnauthorized}, {"example-keel-enroll-secret", http.StatusCreated}, {"example-keel-enroll-secret", http.StatusOK}} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/keel/enroll", strings.NewReader(keelBody))
+		req.Header.Set("Authorization", "Bearer "+tc.secret)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != tc.want {
+			t.Fatalf("keel enroll with terraform secret: %d want %d", res.StatusCode, tc.want)
+		}
+	}
 	connectors := apiGet(t, ts.URL, "/api/v1/source-connectors")
-	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-nvd-api-key"} {
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-keel-enroll-secret", "example-nvd-api-key"} {
 		if strings.Contains(connectors, leak) {
 			t.Fatalf("connector response leaked %s: %s", leak, connectors)
 		}
@@ -427,7 +454,7 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if err := st.Pool().QueryRow(ctx, `SELECT coalesce(string_agg(detail::text, ''), '') FROM audit_log`).Scan(&audit); err != nil {
 		t.Fatal(err)
 	}
-	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-nvd-api-key"} {
+	for _, leak := range []string{"example-crowdstrike-client-secret", "example-kolide-api-token", "example-elastic-api-key", "example-enroll-secret", "example-keel-enroll-secret", "example-nvd-api-key"} {
 		if strings.Contains(audit, leak) {
 			t.Fatalf("audit log contains %s", leak)
 		}

@@ -31,6 +31,9 @@ func (s *Store) seedFleet(ctx context.Context) error {
 		if err := s.seedLogViews(ctx); err != nil {
 			return err
 		}
+		if err := s.seedKeel(ctx); err != nil {
+			return err
+		}
 		return s.seedVulnerabilities(ctx)
 	}
 	p := model.Principal{Kind: "system", ID: "seed", Name: "seed"}
@@ -184,6 +187,9 @@ func (s *Store) seedFleet(ctx context.Context) error {
 		return err
 	}
 	if err := s.seedLogViews(ctx); err != nil {
+		return err
+	}
+	if err := s.seedKeel(ctx); err != nil {
 		return err
 	}
 	return s.seedVulnerabilities(ctx)

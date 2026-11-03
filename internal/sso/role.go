@@ -21,11 +21,12 @@ func ValidRole(role string) bool {
 // ScopesForRole returns the API scopes a role may use.
 // config:write stays off viewer and operator so the UI cannot edit GitOps
 // resources. admin includes "*", which Allows treats as every scope. The UI
-// still does not send the Terraform client header.
+// still does not send the Terraform client header. keel:admin (clearing a
+// device key) is admin only, through "*".
 func ScopesForRole(role string) map[string]bool {
 	read := []string{
 		"config:read", "jobs:read", "runners:read", "munki:read",
-		"osquery:read", "audit:read", "logs:read", "vuln:read",
+		"osquery:read", "audit:read", "logs:read", "vuln:read", "keel:read",
 	}
 	switch role {
 	case RoleAdmin:
