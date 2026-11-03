@@ -109,21 +109,27 @@ type enrollSecretAPI struct {
 	ManagedBy string `json:"managed_by,omitempty"`
 }
 
-func (c *Client) CreateEnrollSecret(ctx context.Context, in enrollSecretAPI) (enrollSecretAPI, error) {
+// Enroll secret collections. osquery and Keel secrets share one wire shape.
+const (
+	osqueryEnrollSecretsPath = "/api/v1/osquery/enroll-secrets"
+	keelEnrollSecretsPath    = "/api/v1/keel/enroll-secrets"
+)
+
+func (c *Client) CreateEnrollSecret(ctx context.Context, base string, in enrollSecretAPI) (enrollSecretAPI, error) {
 	var out enrollSecretAPI
-	err := c.do(ctx, http.MethodPost, "/api/v1/osquery/enroll-secrets", in, &out)
+	err := c.do(ctx, http.MethodPost, base, in, &out)
 	return out, err
 }
-func (c *Client) GetEnrollSecret(ctx context.Context, id string) (enrollSecretAPI, error) {
+func (c *Client) GetEnrollSecret(ctx context.Context, base, id string) (enrollSecretAPI, error) {
 	var out enrollSecretAPI
-	err := c.do(ctx, http.MethodGet, "/api/v1/osquery/enroll-secrets/"+id, nil, &out)
+	err := c.do(ctx, http.MethodGet, base+"/"+id, nil, &out)
 	return out, err
 }
-func (c *Client) UpdateEnrollSecret(ctx context.Context, id string, in enrollSecretAPI) (enrollSecretAPI, error) {
+func (c *Client) UpdateEnrollSecret(ctx context.Context, base, id string, in enrollSecretAPI) (enrollSecretAPI, error) {
 	var out enrollSecretAPI
-	err := c.do(ctx, http.MethodPut, "/api/v1/osquery/enroll-secrets/"+id, in, &out)
+	err := c.do(ctx, http.MethodPut, base+"/"+id, in, &out)
 	return out, err
 }
-func (c *Client) DeleteEnrollSecret(ctx context.Context, id string) error {
-	return c.do(ctx, http.MethodDelete, "/api/v1/osquery/enroll-secrets/"+id, nil, nil)
+func (c *Client) DeleteEnrollSecret(ctx context.Context, base, id string) error {
+	return c.do(ctx, http.MethodDelete, base+"/"+id, nil, nil)
 }

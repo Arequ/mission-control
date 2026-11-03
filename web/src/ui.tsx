@@ -81,6 +81,7 @@ function section(path: string) {
   if (path.startsWith("/coverage")) return "coverage";
   if (path.startsWith("/vulnerabilities")) return "vulns";
   if (path.startsWith("/devices")) return "devices";
+  if (path.startsWith("/configuration")) return "configuration";
   if (path.startsWith("/queries")) return "queries";
   if (path.startsWith("/logs")) return "logs";
   if (path.startsWith("/autopkg") || path.startsWith("/runs") || path.startsWith("/runners")) return "autopkg";
@@ -170,6 +171,7 @@ export function Layout() {
           <div className="side-h">Fleet</div>
           <SideLink id="overview" to="/" icon="layout" label="Overview" active={active === "overview"} end />
           <SideLink id="devices" to="/devices" icon="laptop" label="Devices" count={counts.devices ? String(counts.devices) : ""} active={active === "devices"} />
+          <SideLink id="configuration" to="/configuration" icon="sliders" label="Configuration" active={active === "configuration"} />
           <SideLink id="queries" to="/queries" icon="terminal" label="Queries" active={active === "queries"} />
           <SideLink id="logs" to="/logs" icon="logs" label="Logs" count={counts.logs ? String(counts.logs) : ""} active={active === "logs"} />
           <div className="side-h" style={{ marginTop: 14 }}>Security</div>
@@ -290,6 +292,10 @@ const tone: Record<string, { kind: string; icon?: IconName; live?: boolean }> = 
   pending: { kind: "gray" },
   sent: { kind: "teal", live: true },
   complete: { kind: "green", icon: "check" },
+  ok: { kind: "green", icon: "check" },
+  changed: { kind: "blue", icon: "spark" },
+  would_change: { kind: "orange" },
+  skipped: { kind: "gray" },
 };
 
 export function StatusPill({ status, result }: { status?: string; result?: string }) {

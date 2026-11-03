@@ -1,9 +1,10 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Link, NavLink, useLocation, useParams } from "react-router-dom";
 import { api, type Device, type DeviceEvent } from "../api";
 import { Icon } from "../icons";
 import { LiveQueryPanel } from "./LiveQuery";
 import { DeviceVulnerabilities } from "./Vulnerabilities";
+import { DeviceConfiguration, KeelCard, useKeelDevice } from "./DeviceConfiguration";
 import { Empty, Page, StatusPill, ago, enterStyle, gigabytes, match, uptime, useSearch } from "../ui";
 
 export function DevicePage() {
@@ -24,7 +25,10 @@ export function DevicePage() {
     return () => { stop = true; clearInterval(t); };
   }, [id]);
 
-  const tab = pathname.endsWith("/software")
+  const keel = useKeelDevice(device?.serial ?? "");
+  const tab = pathname.endsWith("/configuration")
+    ? "configuration"
+    : pathname.endsWith("/software")
     ? "software"
     : pathname.endsWith("/queries")
       ? "queries"
@@ -58,8 +62,9 @@ export function DevicePage() {
                 </div>
               </div>
             </header>
-            <DeviceTabs id={device.id} tab={tab} />
-            {tab === "overview" ? <DeviceOverview device={device} /> : null}
+            <DeviceTabs id={device.id} tab={tab} keel={!!keel || tab === "configuration"} />
+            {tab === "overview" ? <DeviceOverview device={device} keel={keel ? <KeelCard keel={keel} deviceId={device.id} /> : null} /> : null}
+            {tab === "configuration" ? <DeviceConfiguration keel={keel} /> : null}
             {tab === "software" ? <DeviceSoftware device={device} /> : null}
             {tab === "queries" ? <LiveQueryPanel deviceId={device.id} deviceName={device.computer_name || device.hostname} /> : null}
             {tab === "vulnerabilities" ? <DeviceVulnerabilities id={device.id} /> : null}
@@ -70,9 +75,10 @@ export function DevicePage() {
   );
 }
 
-function DeviceTabs({ id, tab }: { id: string; tab: string }) {
+function DeviceTabs({ id, tab, keel }: { id: string; tab: string; keel: boolean }) {
   const items = [
     { to: `/devices/${id}`, label: "Overview", on: tab === "overview" },
+    ...(keel ? [{ to: `/devices/${id}/configuration`, label: "Configuration", on: tab === "configuration" }] : []),
     { to: `/devices/${id}/software`, label: "Software", on: tab === "software" },
     { to: `/devices/${id}/queries`, label: "Queries", on: tab === "queries" },
     { to: `/devices/${id}/vulnerabilities`, label: "Vulnerabilities", on: tab === "vulnerabilities" },
@@ -88,7 +94,7 @@ function DeviceTabs({ id, tab }: { id: string; tab: string }) {
   );
 }
 
-function DeviceOverview({ device }: { device: Device }) {
+function DeviceOverview({ device, keel }: { device: Device; keel: ReactNode }) {
   const enc = device.disk_encrypted == null ? "Unknown" : device.disk_encrypted ? "FileVault on" : "FileVault off";
   return (
     <>
@@ -103,6 +109,7 @@ function DeviceOverview({ device }: { device: Device }) {
         <Fact k="Labels" v={device.labels?.length ? device.labels.join(", ") : "None"} />
       </div>
       {device.munki ? <MunkiCard card={device.munki} /> : null}
+      {keel}
       <section className="card">
         <div className="card-h"><span className="card-t">Recent changes</span></div>
         {(device.events ?? []).length === 0 ? <Empty>No changes recorded yet.</Empty> : (

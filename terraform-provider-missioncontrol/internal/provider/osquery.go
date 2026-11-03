@@ -449,12 +449,34 @@ func (r *osqueryLabelResource) ImportState(ctx context.Context, req resource.Imp
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-type enrollSecretResource struct{ client *Client }
+// enrollSecretResource is missioncontrol_osquery_enroll_secret and
+// missioncontrol_keel_enroll_secret. Both are hashed, rotatable, write-only
+// secrets on the same wire shape; only the collection path differs.
+type enrollSecretResource struct {
+	client      *Client
+	typeSuffix  string
+	base        string
+	description string
+}
 
-func newEnrollSecretResource() resource.Resource { return &enrollSecretResource{} }
+func newEnrollSecretResource() resource.Resource {
+	return &enrollSecretResource{
+		typeSuffix:  "_osquery_enroll_secret",
+		base:        osqueryEnrollSecretsPath,
+		description: "An osquery enroll secret. The API stores only a hash. Keep more than one enabled secret while rotating so already-issued instructions and new agents overlap. Enrolled nodes keep their node key until it is invalidated.",
+	}
+}
+
+func newKeelEnrollSecretResource() resource.Resource {
+	return &enrollSecretResource{
+		typeSuffix:  "_keel_enroll_secret",
+		base:        keelEnrollSecretsPath,
+		description: "A Keel enroll secret. Keel sends it once, as a bearer token, to bind a device's Ed25519 report key to its serial. The API stores only a hash. Keep more than one enabled secret while rotating. Enrolled devices keep their key; clearing one is DELETE /api/v1/keel/devices/{serial}/key.",
+	}
+}
 
 func (r *enrollSecretResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_osquery_enroll_secret"
+	resp.TypeName = req.ProviderTypeName + r.typeSuffix
 }
 func (r *enrollSecretResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	r.client = configureClient(req, resp)
@@ -471,7 +493,7 @@ type enrollSecretModel struct {
 
 func (r *enrollSecretResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "An osquery enroll secret. The API stores only a hash. Keep more than one enabled secret while rotating so already-issued instructions and new agents overlap. Enrolled nodes keep their node key until it is invalidated. secret is write-only: it is sent on create and update, never stored in state, and never returned by the API. After import, the configured secret plans one apply that records secret_fingerprint. Later rotations diff against that hash.",
+		Description: r.description + " secret is write-only: it is sent on create and update, never stored in state, and never returned by the API. After import, the configured secret plans one apply that records secret_fingerprint. Later rotations diff against that hash.",
 		Attributes: map[string]schema.Attribute{
 			"id":                 schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"name":               schema.StringAttribute{Required: true},
@@ -499,7 +521,7 @@ func (r *enrollSecretResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 	secret := configuredSecret(cfg.Secret)
-	out, err := r.client.CreateEnrollSecret(ctx, enrollSecretAPI{Name: plan.Name.ValueString(), Secret: secret, Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
+	out, err := r.client.CreateEnrollSecret(ctx, r.base, enrollSecretAPI{Name: plan.Name.ValueString(), Secret: secret, Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
 	if err != nil {
 		resp.Diagnostics.AddError("create enroll secret", err.Error())
 		return
@@ -512,7 +534,7 @@ func (r *enrollSecretResource) Read(ctx context.Context, req resource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	out, err := r.client.GetEnrollSecret(ctx, state.ID.ValueString())
+	out, err := r.client.GetEnrollSecret(ctx, r.base, state.ID.ValueString())
 	if notFound(err) {
 		resp.State.RemoveResource(ctx)
 		return
@@ -535,7 +557,7 @@ func (r *enrollSecretResource) Update(ctx context.Context, req resource.UpdateRe
 		return
 	}
 	secret := configuredSecret(cfg.Secret)
-	out, err := r.client.UpdateEnrollSecret(ctx, plan.ID.ValueString(), enrollSecretAPI{Name: plan.Name.ValueString(), Secret: secret, Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
+	out, err := r.client.UpdateEnrollSecret(ctx, r.base, plan.ID.ValueString(), enrollSecretAPI{Name: plan.Name.ValueString(), Secret: secret, Enabled: plan.Enabled.ValueBool(), ManagedBy: plan.ManagedBy.ValueString()})
 	if err != nil {
 		resp.Diagnostics.AddError("update enroll secret", err.Error())
 		return
@@ -552,7 +574,7 @@ func (r *enrollSecretResource) Delete(ctx context.Context, req resource.DeleteRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if err := r.client.DeleteEnrollSecret(ctx, state.ID.ValueString()); err != nil && !notFound(err) {
+	if err := r.client.DeleteEnrollSecret(ctx, r.base, state.ID.ValueString()); err != nil && !notFound(err) {
 		resp.Diagnostics.AddError("delete enroll secret", err.Error())
 	}
 }

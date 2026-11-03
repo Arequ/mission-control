@@ -89,6 +89,7 @@ func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
 		newOsqueryPackResource,
 		newOsqueryLabelResource,
 		newEnrollSecretResource,
+		newKeelEnrollSecretResource,
 		newMunkiEnrollmentResource,
 		newMunkiClientResource,
 		newSSOProviderResource,

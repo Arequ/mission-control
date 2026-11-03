@@ -106,6 +106,15 @@ resource "missioncontrol_osquery_enroll_secret" "fleet" {
   enabled = true
 }
 
+# Keel posts signed reports with a per-device Ed25519 key. This secret is
+# only used once per Mac, to bind that key to the serial on first enroll.
+# The config repo should keep it in keel/enroll.tf.
+resource "missioncontrol_keel_enroll_secret" "fleet" {
+  name    = "fleet"
+  secret  = var.keel_enroll_secret
+  enabled = true
+}
+
 resource "missioncontrol_osquery_label" "apple_silicon" {
   name        = "apple-silicon"
   description = "Apple silicon Macs"

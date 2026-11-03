@@ -10,6 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	// The alpine image has no tzdata, and schedules and log views validate
+	// IANA zones with time.LoadLocation. Embedding it costs about 450 KB.
+	_ "time/tzdata"
 
 	"github.com/Arequ/mission-control/internal/clock"
 	"github.com/Arequ/mission-control/internal/config"

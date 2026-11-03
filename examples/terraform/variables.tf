@@ -24,6 +24,13 @@ variable "enroll_secret" {
   default     = "example-enroll-secret"
 }
 
+variable "keel_enroll_secret" {
+  description = "Keel enroll secret (the KEEL_ENROLL_SECRET data bag on Macs). This example value is a placeholder for local applies, not a production secret."
+  type        = string
+  sensitive   = true
+  default     = "example-keel-enroll-secret"
+}
+
 variable "crowdstrike_client_secret" {
   description = "CrowdStrike OAuth client secret. Placeholder for local applies, not a production secret."
   type        = string

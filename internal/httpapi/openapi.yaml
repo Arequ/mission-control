@@ -35,6 +35,9 @@ info:
     (MC_CONFIG_REPO, default Arequ/terraform-mission-control), not an API call.
     GET /api/v1/meta returns that repository, its default branch, and a deep
     link for each config kind.
+    Keel agents enroll an Ed25519 public key with a Terraform-managed Keel
+    enroll secret, then sign every report. Keel reads use keel:read; clearing
+    a device key uses keel:admin.
 servers:
   - url: /
 security:
@@ -46,6 +49,7 @@ tags:
   - name: munki
   - name: osquery
   - name: vuln
+  - name: keel
   - name: meta
 paths:
   /healthz:
@@ -679,6 +683,143 @@ paths:
       tags: [munki]
       responses:
         "204": { description: deleted }
+  /api/v1/keel/enroll-secrets:
+    get:
+      tags: [keel]
+      summary: List Keel enroll secrets. The secret value is never returned.
+      responses:
+        "200": { description: list }
+    post:
+      tags: [keel]
+      summary: Create a Keel enroll secret. Requires the Terraform client header.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KeelEnrollSecretWrite" }
+      responses:
+        "201": { description: created, without the secret }
+  /api/v1/keel/enroll-secrets/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [keel]
+      summary: Get a Keel enroll secret record. The secret is not returned.
+      responses:
+        "200": { description: secret metadata }
+    put:
+      tags: [keel]
+      summary: Rotate or disable a Keel enroll secret. An empty secret keeps the stored hash. Requires the Terraform client header.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [keel]
+      summary: Delete a Keel enroll secret. Enrolled keys stay bound. Requires the Terraform client header.
+      responses:
+        "204": { description: deleted }
+  /api/v1/keel/enroll:
+    post:
+      tags: [keel]
+      summary: Bind a device Ed25519 public key to its serial (trust on first use).
+      description: |
+        Authorization is `Bearer <keel enroll secret>`, compared against every
+        enabled secret hash in constant time. An unknown serial is bound (201).
+        The same key again is idempotent (200). A different key is 409 until an
+        admin clears it with DELETE /api/v1/keel/devices/{serial}/key.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KeelEnroll" }
+      responses:
+        "200": { description: already bound to this key }
+        "201": { description: key bound to serial }
+        "400": { description: invalid serial or public key }
+        "401": { description: missing or unknown enroll secret }
+        "409": { description: serial is bound to a different key }
+  /api/v1/keel/report:
+    post:
+      tags: [keel]
+      summary: Signed Keel run report.
+      description: |
+        Headers X-Keel-Serial, X-Keel-Timestamp (unix seconds), and
+        X-Keel-Signature (standard base64 Ed25519). The signed message is
+        `keel-report-v1\n<serial>\n<timestamp>\n<lowercase hex sha256 of the exact body>`
+        with no trailing newline. 401 when the serial has no key, the signature
+        fails, the timestamp is more than 300 seconds from the server clock, or
+        the timestamp is not after the last accepted one for that serial. The
+        replay floor moves in the same transaction as the insert. 400 when the
+        verified body is not `keel.report/v1` or device.serial differs from
+        X-Keel-Serial. Unknown body fields are ignored and kept. The last 50
+        runs per serial are kept.
+      security: []
+      parameters:
+        - { in: header, name: X-Keel-Serial, required: true, schema: { type: string } }
+        - { in: header, name: X-Keel-Timestamp, required: true, schema: { type: integer, format: int64 } }
+        - { in: header, name: X-Keel-Signature, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/KeelReport" }
+      responses:
+        "202": { description: accepted }
+        "400": { description: body does not follow the v1 schema or serial mismatch }
+        "401": { description: no key, bad signature, clock skew, or replay }
+        "413": { description: body over 2 MiB }
+  /api/v1/keel/overview:
+    get:
+      tags: [keel]
+      summary: Roles with device counts and enabled profiles, plus failed (a failed resource or a "compile:" warning), pending (plan), warned, and stale devices. Needs keel:read.
+      responses:
+        "200": { description: overview }
+  /api/v1/keel/devices:
+    get:
+      tags: [keel]
+      summary: Keel devices with the latest run summary. Needs keel:read.
+      parameters:
+        - { in: query, name: role, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [failed, pending, stale, warnings] } }
+        - { in: query, name: q, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer } }
+        - { in: query, name: offset, schema: { type: integer } }
+      responses:
+        "200": { description: devices and total }
+  /api/v1/keel/devices/{serial}:
+    parameters:
+      - { in: path, name: serial, required: true, schema: { type: string } }
+    get:
+      tags: [keel]
+      summary: One serial, its unified device id, and the body of its latest report. Needs keel:read.
+      responses:
+        "200": { description: device and report }
+        "404": { description: unknown serial }
+  /api/v1/keel/devices/{serial}/runs:
+    parameters:
+      - { in: path, name: serial, required: true, schema: { type: string } }
+    get:
+      tags: [keel]
+      summary: Run history summaries, newest first. Needs keel:read.
+      responses:
+        "200": { description: runs }
+  /api/v1/keel/devices/{serial}/key:
+    parameters:
+      - { in: path, name: serial, required: true, schema: { type: string } }
+    delete:
+      tags: [keel]
+      summary: Clear the key bound to a serial so the device can enroll again. Needs keel:admin or *. Run history is kept.
+      responses:
+        "204": { description: cleared }
+        "404": { description: no key for that serial }
+  /api/v1/keel/roles/{role}/profiles/{profile}:
+    parameters:
+      - { in: path, name: role, required: true, schema: { type: string } }
+      - { in: path, name: profile, required: true, schema: { type: string } }
+    get:
+      tags: [keel]
+      summary: Distinct effective settings of a profile across devices whose leaf role is role, with counts. Needs keel:read.
+      responses:
+        "200": { description: variants }
+        "404": { description: no device reports that leaf role }
   /api/v1/sso/providers:
     get:
       tags: [meta]
@@ -1311,6 +1452,86 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    KeelEnrollSecretWrite:
+      type: object
+      required: [name, secret]
+      properties:
+        name: { type: string }
+        secret: { type: string, writeOnly: true, minLength: 8 }
+        enabled: { type: boolean, default: true }
+    KeelEnroll:
+      type: object
+      required: [serial, public_key]
+      properties:
+        serial: { type: string, example: DF7XP7HY3N }
+        hostname: { type: string, example: CW-DF7XP7HY3N-L }
+        public_key: { type: string, description: Standard base64 of a 32-byte Ed25519 public key. }
+    KeelReport:
+      type: object
+      required: [schema, run_id, mode, started_at, device]
+      additionalProperties: true
+      properties:
+        schema: { type: string, enum: [keel.report/v1] }
+        run_id: { type: string }
+        keel_version: { type: string }
+        mode: { type: string, enum: [apply, plan] }
+        started_at: { type: string, format: date-time }
+        duration_ms: { type: integer }
+        device:
+          type: object
+          required: [serial]
+          properties:
+            serial: { type: string }
+            hostname: { type: string }
+            model: { type: string }
+            os_version: { type: string }
+            arch: { type: string }
+            console_user: { type: string }
+        roles:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              parents: { type: array, items: { type: string } }
+              match: { type: string, description: 'Why the device is in this leaf role, e.g. "marker content_caching" or "default".' }
+        facts: { type: object, additionalProperties: true }
+        profiles:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              enabled: { type: boolean }
+              settings: { type: object, additionalProperties: true, description: 'Secret values are the literal "[redacted]".' }
+        resources:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string }
+              type: { type: string }
+              profile: { type: string }
+              status: { type: string, enum: [ok, changed, would_change, failed, skipped] }
+              message: { type: string }
+              duration_ms: { type: integer }
+        warnings:
+          type: array
+          items: { type: string }
+          description: 'Policy decisions for a human. A warning starting "compile: " means the policy did not compile; roles, profiles, and resources are then empty and the device counts as failing.'
+        overlays:
+          type: array
+          items: { type: string }
+          description: Overlay files that applied.
+        summary:
+          type: object
+          properties:
+            total: { type: integer }
+            ok: { type: integer }
+            changed: { type: integer }
+            would_change: { type: integer }
+            failed: { type: integer }
+            skipped: { type: integer }
     RecipeRepoWrite:
       type: object
       required: [name, url]

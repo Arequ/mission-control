@@ -71,6 +71,7 @@ SSO is `missioncontrol_sso_provider` (issuer, client id, write-only client secre
 Enroll a Mac (the server side of this is what compose exercises; a physical Mac was not enrolled from this environment):
 
 - osqueryd: `--tls_hostname=<ingress>:443`, `--tls_server_certs` for that certificate, the historical endpoints `/enroll`, `/config`, `/logger`, `/distributed_read`, `/distributed_write`, and `--disable_distributed=false`. The enroll secret file contains the Terraform `missioncontrol_osquery_enroll_secret` value.
+- Keel: each Mac enrolls an Ed25519 public key once with `POST /api/v1/keel/enroll` (Bearer `missioncontrol_keel_enroll_secret`, the `KEEL_ENROLL_SECRET` data bag), then signs every run report to `POST /api/v1/keel/report`. See `client/keel/README.md` for the signed message and a reference client.
 - Munki: `SoftwareRepoURL` `https://<host>/repo`, `AdditionalHttpHeaders` with `Authorization: Basic` or `Bearer` using the enrollment secret or the per-serial HMAC described in `client/munki/README.md`. Install the package built by `client/munki/build-pkg.sh` on macOS (`pkgbuild` is not available on Linux). The postflight posts `ManagedInstallReport.plist` to `POST /munki/checkin`.
 - AutoPkg: run `mc-runner` on the Mac with `--autopkg autopkg`, `--sync-repos`, the bootstrap token, and a pool label that matches the recipe.
 
@@ -89,7 +90,7 @@ make smoke
 
 Sign in at http://localhost:8080 as `ava@example.com` / `example-oidc-password`. Dex static passwords do not emit groups, so that user is a viewer through the `*` role binding. API tokens still work for Terraform and automation (`mc_dev_admin_token`). These compose values are local placeholders, the same class as the dev tokens. Do not reuse them outside this repo.
 
-The placeholders used by the example stack are `example-enroll-secret`, `example-oidc-client-secret`, `example-oidc-password`, `example-munki-enrollment-secret`, and empty Elastic credentials pointed at `http://elasticsearch:9200`.
+The placeholders used by the example stack are `example-enroll-secret`, `example-keel-enroll-secret`, `example-oidc-client-secret`, `example-oidc-password`, `example-munki-enrollment-secret`, and empty Elastic credentials pointed at `http://elasticsearch:9200`.
 
 To apply the example yourself after the server is up:
 
@@ -99,7 +100,7 @@ export TF_CLI_CONFIG_FILE="$PWD/bin/dev.tfrc"
 terraform -chdir=examples/terraform apply -auto-approve
 ```
 
-That creates a runner pool, the AutoPkg recipe repo, a Firefox override, a 06:15 schedule, fleet pipeline limits, a 7-day promotion from `testing` to `production`, two Munki manifests, a Munki enrollment and demo client, an osquery enroll secret, labels, a query, a pack, a connector for each coverage source, two log views (a device-scoped endpoint timeline and an AutoPKG run log), vulnerability feed settings with one CPE override, a Dex SSO provider, and role bindings. Dev overrides skip the Terraform registry, so you do not need `terraform init`. Connector credentials, the log view API key, the NVD API key, the OIDC client secret, and the Munki enrollment secret in the example are placeholders. The NVD key, OIDC secret, and enrollment secret are write-only.
+That creates a runner pool, the AutoPkg recipe repo, a Firefox override, a 06:15 schedule, fleet pipeline limits, a 7-day promotion from `testing` to `production`, two Munki manifests, a Munki enrollment and demo client, an osquery enroll secret, a Keel enroll secret, labels, a query, a pack, a connector for each coverage source, two log views (a device-scoped endpoint timeline and an AutoPKG run log), vulnerability feed settings with one CPE override, a Dex SSO provider, and role bindings. Dev overrides skip the Terraform registry, so you do not need `terraform init`. Connector credentials, the log view API key, the NVD API key, the OIDC client secret, and the Munki enrollment secret in the example are placeholders. The NVD key, OIDC secret, and enrollment secret are write-only.
 
 Apply the example stack to a database that was not seeded. `MC_DEV_SEED=1` already inserts resources with those names, including the local enroll secret `mc_dev_enroll_secret`. The example variable `enroll_secret` defaults to `example-enroll-secret`. Both values are local placeholders.
 
@@ -194,6 +195,7 @@ Covers fleet concurrency and per-runner parallelism, label and pool matching, le
 | `web` | React UI |
 | `deploy/k8s/server.yaml` | Deployment and Service |
 | `client/munki` | Munki preflight, postflight, and pkg build script |
+| `client/keel` | Reference Keel enroll and signed-report client |
 | `deploy/dex` | Dex config for the compose OIDC provider |
 | `scripts/demo.sh` | Compose up, terraform apply, empty second plan |
 | `scripts/smoke.sh` | End-to-end checks against the compose stack |

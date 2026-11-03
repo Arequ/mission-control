@@ -1,6 +1,6 @@
 # Agent rules
 
-This repository is public. Never commit secrets, `.env`, `.demo/` (TLS keys and enroll secrets), Terraform state, or real IdP credentials. Local placeholders (`mc_dev_admin_token`, `example-oidc-client-secret`, `example-munki-enrollment-secret`, `example-enroll-secret`) are the same class as the compose file and are not production secrets.
+This repository is public. Never commit secrets, `.env`, `.demo/` (TLS keys and enroll secrets), Terraform state, or real IdP credentials. Local placeholders (`mc_dev_admin_token`, `example-oidc-client-secret`, `example-munki-enrollment-secret`, `example-enroll-secret`, `example-keel-enroll-secret`) are the same class as the compose file and are not production secrets.
 
 ## Before pushing
 
