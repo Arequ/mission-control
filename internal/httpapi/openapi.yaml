@@ -42,7 +42,7 @@ info:
     role (viewer, operator, admin) or a Terraform-managed custom role. A custom
     role lists permissions of the form <area>:<read|write|update>; write or
     update on an area implies read on it. Areas are audit, config, jobs, keel,
-    logs, munki, osquery, releases, runners, and vuln. config:write,
+    logs, munki, osquery, releases, runners, rush, and vuln. config:write,
     config:update, and * cannot be granted to a custom role. A user holds the
     union of every role their groups match, resolved again on each request.
     Every imported build opens a release review. The server scores it from the
@@ -647,11 +647,13 @@ paths:
     parameters: [{ $ref: "#/components/parameters/id" }]
     post:
       tags: [munki]
-      summary: Decide a review. releases:update. Body {"decision":"rush"|"normal"|"reject","note":"..."}.
+      summary: Decide a review. releases:update; rush also needs rush:update. Body {"decision":"rush"|"normal"|"reject","note":"..."}.
       description: >
-        rush moves a pending build to the final catalog now. normal leaves it on
-        the soak schedule. reject moves it to the rejected catalog; it is allowed
-        on pending, rushed, and normal reviews.
+        rush moves a pending HIGH priority build to the final catalog now. It
+        needs rush:update (403 without it) and a HIGH priority from the feeds
+        (409 for LOW). normal leaves the build on the soak schedule. reject
+        moves it to the rejected catalog; it is allowed on pending, rushed, and
+        normal reviews.
       responses:
         "200": { description: decided review }
         "400": { description: unknown decision }
@@ -676,6 +678,9 @@ paths:
       tags: [munki]
       summary: Advisor reports findings for a leased review. releases:write.
       description: >
+        The read is a short template: headline (one line), highlights (up to
+        5 fragments), caveats (up to 2), exploited, and a one-line rationale;
+        summary is the long form shown collapsed. Longer values are clipped.
         Fields are validated: recommendation is high or low, CVE IDs must be
         well formed, sources must be https. Named CVEs are fetched from NVD,
         KEV, and EPSS, and the review is re-scored.

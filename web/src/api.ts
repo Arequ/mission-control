@@ -594,6 +594,10 @@ export type ReleaseReview = {
   decision_note?: string;
   notes: {
     status: "pending" | "leased" | "done" | "failed";
+    headline: string;
+    highlights: string[];
+    caveats: string[];
+    exploited: boolean;
     summary: string;
     recommendation: "" | "high" | "low";
     rationale: string;

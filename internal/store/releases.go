@@ -26,7 +26,8 @@ const reviewCols = `r.id, r.package_id, r.name, r.version, r.baseline_version, p
 	r.software_key, r.priority, r.reasons, r.fixed, r.still_open, r.exposed_devices, r.status,
 	r.decided_by, r.decided_at, r.decision_note, r.notes_status, r.notes_summary, r.notes_recommendation,
 	r.notes_rationale, r.notes_security_fixes, r.notes_cves, r.notes_sources, r.notes_model, r.notes_error,
-	r.notes_attempts, r.notes_at, r.created_at, r.evaluated_at, COALESCE(p.pkginfo->>'display_name', '')`
+	r.notes_attempts, r.notes_at, r.created_at, r.evaluated_at, COALESCE(p.pkginfo->>'display_name', ''),
+	r.notes_headline, r.notes_highlights, r.notes_caveats, r.notes_exploited`
 
 func scanReview(row pgx.Row) (model.ReleaseReview, error) {
 	var r model.ReleaseReview
@@ -35,7 +36,8 @@ func scanReview(row pgx.Row) (model.ReleaseReview, error) {
 		&r.SoftwareKey, &r.Priority, &reasons, &r.Fixed, &r.StillOpen, &r.ExposedDevices, &r.Status,
 		&r.DecidedBy, &r.DecidedAt, &r.DecisionNote, &r.Notes.Status, &r.Notes.Summary, &r.Notes.Recommendation,
 		&r.Notes.Rationale, &r.Notes.SecurityFixes, &r.Notes.CVEs, &r.Notes.Sources, &r.Notes.Model, &r.Notes.Error,
-		&r.Notes.Attempts, &r.Notes.At, &r.CreatedAt, &r.EvaluatedAt, &r.DisplayName)
+		&r.Notes.Attempts, &r.Notes.At, &r.CreatedAt, &r.EvaluatedAt, &r.DisplayName,
+		&r.Notes.Headline, &r.Notes.Highlights, &r.Notes.Caveats, &r.Notes.Exploited)
 	if err != nil {
 		return r, err
 	}
@@ -48,6 +50,12 @@ func scanReview(row pgx.Row) (model.ReleaseReview, error) {
 	}
 	if r.Notes.Sources == nil {
 		r.Notes.Sources = []string{}
+	}
+	if r.Notes.Highlights == nil {
+		r.Notes.Highlights = []string{}
+	}
+	if r.Notes.Caveats == nil {
+		r.Notes.Caveats = []string{}
 	}
 	if r.DisplayName == "" {
 		r.DisplayName = r.Name
@@ -373,6 +381,16 @@ func (s *Store) DecideRelease(ctx context.Context, p model.Principal, id string,
 	if err != nil {
 		return model.ReleaseReview{}, notFound(err)
 	}
+	// Skipping the soak is its own grant, and only for a build the feeds rate
+	// HIGH. The advisor's opinion cannot make a build rushable.
+	if decision == "rush" {
+		if !p.Allows("rush:update") {
+			return model.ReleaseReview{}, fmt.Errorf("%w: rushing to production needs rush:update", ErrForbidden)
+		}
+		if priority != "high" {
+			return model.ReleaseReview{}, fmt.Errorf("%w: only a HIGH priority build can be rushed; use the normal track", ErrConflict)
+		}
+	}
 	// Rush and normal decide a pending build. Reject is always available until
 	// the build is already rejected or superseded, including after it shipped.
 	allowed := cur == "pending" || (decision == "reject" && (cur == "rushed" || cur == "normal"))
@@ -505,9 +523,11 @@ func (s *Store) SubmitReleaseNotes(ctx context.Context, p model.Principal, id st
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE release_reviews SET notes_status='done', notes_lease_until=NULL, notes_summary=$2,
 			notes_recommendation=$3, notes_rationale=$4, notes_security_fixes=$5, notes_cves=$6,
-			notes_sources=$7, notes_model=$8, notes_error='', notes_at=$9
+			notes_sources=$7, notes_model=$8, notes_error='', notes_at=$9, notes_headline=$10,
+			notes_highlights=$11, notes_caveats=$12, notes_exploited=$13
 		WHERE id=$1 AND status='pending' AND notes_status='leased'`,
-		id, clean.Summary, clean.Recommendation, clean.Rationale, clean.SecurityFixes, clean.CVEs, clean.Sources, clean.Model, s.now())
+		id, clean.Summary, clean.Recommendation, clean.Rationale, clean.SecurityFixes, clean.CVEs, clean.Sources, clean.Model, s.now(),
+		clean.Headline, clean.Highlights, clean.Caveats, clean.Exploited)
 	if err != nil {
 		return model.ReleaseReview{}, err
 	}
@@ -579,9 +599,14 @@ func (s *Store) ReevaluatePendingReleases(ctx context.Context) error {
 }
 
 func cleanNotes(in model.ReleaseNotesInput) (model.ReleaseNotesInput, error) {
-	out := model.ReleaseNotesInput{SecurityFixes: in.SecurityFixes}
+	out := model.ReleaseNotesInput{SecurityFixes: in.SecurityFixes, Exploited: in.Exploited}
 	out.Summary = clip(strings.TrimSpace(in.Summary), 4000)
-	out.Rationale = clip(strings.TrimSpace(in.Rationale), 2000)
+	// The template is short on purpose: one line, a few fragments. Longer
+	// input is clipped, not rejected, so a chatty answer still lands.
+	out.Headline = clip(oneLine(in.Headline), 120)
+	out.Rationale = clip(oneLine(in.Rationale), 200)
+	out.Highlights = shortList(in.Highlights, 5, 100)
+	out.Caveats = shortList(in.Caveats, 2, 120)
 	out.Model = clip(strings.TrimSpace(in.Model), 100)
 	switch strings.ToLower(strings.TrimSpace(in.Recommendation)) {
 	case "high":
@@ -591,8 +616,12 @@ func cleanNotes(in model.ReleaseNotesInput) (model.ReleaseNotesInput, error) {
 	default:
 		return out, invalid("recommendation must be high or low")
 	}
-	if out.Summary == "" {
-		return out, invalid("summary is required")
+	if out.Headline == "" {
+		// Older advisors send only the long form; lead with its first sentence.
+		out.Headline = clip(firstSentence(out.Summary), 120)
+	}
+	if out.Headline == "" {
+		return out, invalid("headline is required")
 	}
 	seen := map[string]bool{}
 	out.CVEs = []string{}
@@ -707,6 +736,35 @@ func (s *Store) auditNow(ctx context.Context, p model.Principal, action, kind, i
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func shortList(in []string, max, each int) []string {
+	out := []string{}
+	for _, v := range in {
+		v = strings.TrimLeft(oneLine(v), "-•* ")
+		if v == "" {
+			continue
+		}
+		if len(out) == max {
+			break
+		}
+		out = append(out, clip(v, each))
+	}
+	return out
+}
+
+func firstSentence(s string) string {
+	s = oneLine(s)
+	for i := 0; i+1 < len(s); i++ {
+		if (s[i] == '.' || s[i] == '!' || s[i] == '?') && s[i+1] == ' ' {
+			return s[:i+1]
+		}
+	}
+	return s
 }
 
 func clip(s string, n int) string {

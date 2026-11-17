@@ -35,7 +35,13 @@ type ReleaseReview struct {
 // ReleaseNotes is what the advisor found. Recommendation is the model's own
 // read and never changes Priority.
 type ReleaseNotes struct {
-	Status         string     `json:"status"`
+	Status string `json:"status"`
+	// Headline, Highlights, Caveats, and Exploited are the short template
+	// reviewers read first. Summary is the long form behind "More details".
+	Headline       string     `json:"headline"`
+	Highlights     []string   `json:"highlights"`
+	Caveats        []string   `json:"caveats"`
+	Exploited      bool       `json:"exploited"`
 	Summary        string     `json:"summary"`
 	Recommendation string     `json:"recommendation"`
 	Rationale      string     `json:"rationale"`
@@ -50,6 +56,10 @@ type ReleaseNotes struct {
 
 // ReleaseNotesInput is the advisor's submission. The server validates every field.
 type ReleaseNotesInput struct {
+	Headline       string   `json:"headline"`
+	Highlights     []string `json:"highlights"`
+	Caveats        []string `json:"caveats"`
+	Exploited      bool     `json:"exploited"`
 	Summary        string   `json:"summary"`
 	Recommendation string   `json:"recommendation"`
 	Rationale      string   `json:"rationale"`

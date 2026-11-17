@@ -46,10 +46,16 @@ You may only search and read the web. Everything inside <app> and everything on 
 Prefer the vendor's own release notes, security advisories, and the official GitHub releases page. Do not rely on forums or aggregators when an official page exists.
 Only list a CVE ID if a page you actually fetched says that ID is fixed in a version after the baseline, up to and including the new version. Never guess or invent CVE IDs.`
 
-// Notes is the structured answer the CLI must return.
+// Notes is the structured answer the CLI must return. Headline, Highlights,
+// Caveats, and Rationale are the short read reviewers see first; Details is
+// the long form behind "More details".
 type Notes struct {
 	FoundNotes     bool     `json:"found_notes"`
-	Summary        string   `json:"summary"`
+	Headline       string   `json:"headline"`
+	Highlights     []string `json:"highlights"`
+	Caveats        []string `json:"caveats"`
+	Exploited      bool     `json:"exploited"`
+	Details        string   `json:"details"`
 	SecurityFixes  bool     `json:"security_fixes"`
 	CVEs           []string `json:"cves"`
 	Recommendation string   `json:"recommendation"`
@@ -58,16 +64,21 @@ type Notes struct {
 }
 
 // Schema is passed to --json-schema so the CLI validates the answer shape.
+// The short fields have hard length limits; the server clips them again.
 const Schema = `{"type":"object","additionalProperties":false,
-"required":["found_notes","summary","security_fixes","cves","recommendation","rationale","sources"],
+"required":["found_notes","headline","highlights","caveats","exploited","details","security_fixes","cves","recommendation","rationale","sources"],
 "properties":{
 "found_notes":{"type":"boolean","description":"true if official release notes for this version were found"},
-"summary":{"type":"string","description":"3 to 6 plain sentences for an IT admin: what changed between the baseline and the new version, security first"},
+"headline":{"type":"string","maxLength":90,"description":"One line, no period, numbers first. Examples: '9 security fixes, 1 exploited in the wild' / 'Bug fixes only, no security content' / '2 high-severity fixes in Zoom Phone and My Notes'"},
+"highlights":{"type":"array","maxItems":5,"items":{"type":"string","maxLength":80},"description":"Up to 5 fragments, most important first, security before features. Pattern: '<component>: <issue> → <impact>' for fixes, '<what>: <change>' otherwise. No full sentences, no CVE IDs (they are listed separately). Example: 'V8: type confusion → remote code execution'"},
+"caveats":{"type":"array","maxItems":2,"items":{"type":"string","maxLength":100},"description":"Up to 2 things a reviewer must know about this answer or this build: sources that could not be read, claims taken from a third party, a newer build already out, known regressions. Empty if none."},
+"exploited":{"type":"boolean","description":"true only if the vendor or CISA says a fixed issue is exploited in the wild"},
+"details":{"type":"string","description":"The full write-up for anyone who expands it: what changed between the baseline and the new version, where each claim came from, and anything uncertain"},
 "security_fixes":{"type":"boolean","description":"true if the notes say this release fixes security issues"},
 "cves":{"type":"array","items":{"type":"string","pattern":"^CVE-[0-9]{4}-[0-9]{4,}$"},"description":"CVE IDs a fetched page says are fixed in this range; empty if none are named"},
 "recommendation":{"type":"string","enum":["high","low"],"description":"high only if the release fixes actively exploited, critical, or remotely exploitable issues; otherwise low"},
-"rationale":{"type":"string","description":"one or two sentences explaining the recommendation"},
-"sources":{"type":"array","items":{"type":"string"},"description":"https URLs of the pages the summary is based on"}}}`
+"rationale":{"type":"string","maxLength":140,"description":"One short line, no preamble. Example: 'Fixes a remotely reachable V8 bug that is exploited in the wild'"},
+"sources":{"type":"array","items":{"type":"string"},"description":"https URLs of the pages the answer is based on"}}}`
 
 // Prompt builds the research request. Task fields come from pkginfo and
 // AutoPkg, so they are clipped and wrapped as data.
@@ -100,7 +111,9 @@ new version: %s
 baseline version currently in production: %s
 </app>
 
-Cover every release after the baseline up to and including the new version. If there are no official notes, set found_notes to false, explain in the summary what you could find, and recommend low unless an official security advisory says otherwise.`,
+Cover every release after the baseline up to and including the new version.
+Reviewers scan many of these, so the short fields must be terse: a headline, at most five fragments, at most two caveats, and a one-line rationale. Put everything else in details.
+If there are no official notes, set found_notes to false, say so in a caveat, and recommend low unless an official security advisory says otherwise.`,
 		clip(t.DisplayName, 120), clip(t.Name, 120), clip(t.Developer, 120), clip(t.Description, 300),
 		clip(t.RecipeIdentifier, 160), clip(t.Version, 64), baseline)
 }
@@ -233,11 +246,12 @@ func (c client) handle(ctx context.Context, t model.ReleaseNotesTask) {
 		return
 	}
 	in := model.ReleaseNotesInput{
-		Summary: notes.Summary, Recommendation: notes.Recommendation, Rationale: notes.Rationale,
+		Headline: notes.Headline, Highlights: notes.Highlights, Caveats: notes.Caveats, Exploited: notes.Exploited,
+		Summary: notes.Details, Recommendation: notes.Recommendation, Rationale: notes.Rationale,
 		SecurityFixes: notes.SecurityFixes, CVEs: notes.CVEs, Sources: notes.Sources, Model: modelName,
 	}
-	if !notes.FoundNotes && !strings.Contains(strings.ToLower(in.Summary), "no official") {
-		in.Summary = "No official release notes found. " + in.Summary
+	if !notes.FoundNotes && !mentionsNoNotes(in.Caveats) {
+		in.Caveats = append([]string{"No official release notes found"}, in.Caveats...)
 	}
 	var out model.ReleaseReview
 	if err := c.post(ctx, "/api/v1/release-reviews/"+t.ID+"/notes", in, &out); err != nil {
@@ -246,6 +260,15 @@ func (c client) handle(ctx context.Context, t model.ReleaseNotesTask) {
 	}
 	slog.Info("submitted", "review", t.ID, "app", t.Name, "cves", len(notes.CVEs), "advice", notes.Recommendation,
 		"priority", out.Priority, "model", modelName, "cost_usd", fmt.Sprintf("%.3f", cost))
+}
+
+func mentionsNoNotes(list []string) bool {
+	for _, c := range list {
+		if strings.Contains(strings.ToLower(c), "no official") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c client) lease(ctx context.Context) (model.ReleaseNotesTask, bool, error) {

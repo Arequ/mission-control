@@ -57,7 +57,7 @@ func TestResolveAccessNoMatch(t *testing.T) {
 }
 
 func TestCheckCustomPermission(t *testing.T) {
-	for _, ok := range []string{"releases:update", "munki:read", "jobs:write", "config:read"} {
+	for _, ok := range []string{"releases:update", "munki:read", "jobs:write", "config:read", "rush:update"} {
 		if err := CheckCustomPermission(ok); err != nil {
 			t.Fatalf("%s: %v", ok, err)
 		}
@@ -66,6 +66,12 @@ func TestCheckCustomPermission(t *testing.T) {
 		if CheckCustomPermission(bad) == nil {
 			t.Fatalf("%q accepted", bad)
 		}
+	}
+}
+
+func TestOperatorCannotRush(t *testing.T) {
+	if ScopesForRole(RoleOperator)["rush:update"] || !ScopesForRole(RoleOperator)["releases:update"] {
+		t.Fatal("operators decide reviews but rush:update must be granted on purpose")
 	}
 }
 

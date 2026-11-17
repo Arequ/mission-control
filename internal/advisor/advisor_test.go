@@ -74,7 +74,8 @@ func (f *fakeServer) handler(t *testing.T) http.Handler {
 
 const goodOutput = `{"type":"result","subtype":"success","is_error":false,"result":"{}","total_cost_usd":0.42,
 "modelUsage":{"claude-opus-5-5":{}},
-"structured_output":{"found_notes":true,"summary":"Chrome 131.0.6778.108 fixes two V8 type confusion bugs.",
+"structured_output":{"found_notes":true,"headline":"2 high-severity V8 fixes","highlights":["V8: type confusion → remote code execution"],
+"caveats":[],"exploited":false,"details":"Chrome 131.0.6778.108 fixes two V8 type confusion bugs.",
 "security_fixes":true,"cves":["CVE-2024-12053","CVE-2024-11395"],"recommendation":"high",
 "rationale":"V8 type confusion is remotely exploitable.","sources":["https://chromereleases.googleblog.com/2024/12/stable-channel-update-for-desktop.html"]}}`
 
@@ -92,7 +93,8 @@ func TestRunResearchesAndSubmits(t *testing.T) {
 	if f.submitted == nil {
 		t.Fatal("nothing submitted")
 	}
-	if f.submitted.Recommendation != "high" || len(f.submitted.CVEs) != 2 || f.submitted.Model != "claude-opus-5-5" {
+	if f.submitted.Recommendation != "high" || len(f.submitted.CVEs) != 2 || f.submitted.Model != "claude-opus-5-5" ||
+		f.submitted.Headline != "2 high-severity V8 fixes" || len(f.submitted.Highlights) != 1 || !strings.Contains(f.submitted.Summary, "two V8") {
 		t.Fatalf("submitted %+v", f.submitted)
 	}
 	for _, a := range f.auth {

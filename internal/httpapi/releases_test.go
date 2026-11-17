@@ -23,6 +23,7 @@ func TestReleaseReviewPermissions(t *testing.T) {
 		"mc_advisor":  {"releases:write"},
 		"mc_reviewer": {"releases:update"},
 		"mc_reader":   {"releases:read"},
+		"mc_rusher":   {"releases:update", "rush:update"},
 	} {
 		if err := st.EnsureAPIToken(ctx, name, name, scopes); err != nil {
 			t.Fatal(err)
@@ -81,11 +82,18 @@ func TestReleaseReviewPermissions(t *testing.T) {
 		t.Fatalf("notes %d %s", status, body)
 	}
 
+	// Slack is LOW: no one can rush it, and releases:update alone never can.
+	if status, _ := do(t, ts, http.MethodPost, decide, "mc_reviewer", json, `{"decision":"rush"}`); status != http.StatusForbidden {
+		t.Fatalf("rush without rush:update %d", status)
+	}
+	if status, _ := do(t, ts, http.MethodPost, decide, "mc_rusher", json, `{"decision":"rush"}`); status != http.StatusConflict {
+		t.Fatalf("rushed a LOW build %d", status)
+	}
 	status, body = do(t, ts, http.MethodPost, decide, "mc_reviewer", json, `{"decision":"normal","note":"routine"}`)
 	if status != http.StatusOK || !strings.Contains(body, `"status":"normal"`) {
 		t.Fatalf("decide %d %s", status, body)
 	}
-	if status, _ := do(t, ts, http.MethodPost, decide, "mc_reviewer", json, `{"decision":"rush"}`); status != http.StatusConflict {
+	if status, _ := do(t, ts, http.MethodPost, decide, "mc_rusher", json, `{"decision":"rush"}`); status != http.StatusConflict {
 		t.Fatalf("rush after normal %d", status)
 	}
 }

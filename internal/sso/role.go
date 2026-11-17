@@ -37,8 +37,9 @@ func ScopesForRole(role string) map[string]bool {
 		for _, s := range read {
 			set[s] = true
 		}
-		// releases:update decides release reviews (rush, normal track, reject),
-		// next to munki:write, which already promotes by hand.
+		// releases:update decides release reviews (normal track, reject), next
+		// to munki:write, which already promotes by hand. Rushing a build to
+		// production is rush:update, which no built-in role but admin holds.
 		for _, s := range []string{"jobs:write", "runners:write", "munki:write", "osquery:write", "vuln:write", "releases:update"} {
 			set[s] = true
 		}

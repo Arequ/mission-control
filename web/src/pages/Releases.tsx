@@ -23,6 +23,7 @@ export function ReleasesPage() {
   const { q } = useSearch();
   const user = useSession();
   const canDecide = can(user, "releases:update");
+  const canRush = can(user, "rush:update");
   const [filter, setFilter] = useState<Filter>("pending");
   const [reviews, setReviews] = useState<ReleaseReview[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -77,7 +78,7 @@ export function ReleasesPage() {
           ) : (
             <div className="releases">
               {shown.map((r, i) => (
-                <ReviewCard key={r.id} review={r} index={i} canDecide={canDecide} onDecided={replace} onError={setError} />
+                <ReviewCard key={r.id} review={r} index={i} canDecide={canDecide} canRush={canRush} onDecided={replace} onError={setError} />
               ))}
             </div>
           )}
@@ -90,15 +91,21 @@ export function ReleasesPage() {
   );
 }
 
-function ReviewCard({ review: r, index, canDecide, onDecided, onError }: {
-  review: ReleaseReview; index: number; canDecide: boolean;
+function ReviewCard({ review: r, index, canDecide, canRush, onDecided, onError }: {
+  review: ReleaseReview; index: number; canDecide: boolean; canRush: boolean;
   onDecided: (r: ReleaseReview) => void; onError: (msg: string) => void;
 }) {
   const [pending, setPending] = useState<ReleaseDecision | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
+  // The server enforces the same rules: rush needs rush:update and a HIGH
+  // priority from the feeds; normal and reject need releases:update.
+  const rushable = r.status === "pending" && r.priority === "high" && canRush;
   const actions: ReleaseDecision[] =
-    r.status === "pending" ? ["rush", "normal", "reject"] : r.status === "rushed" || r.status === "normal" ? ["reject"] : [];
+    r.status === "pending" ? [...(rushable ? ["rush" as const] : []), "normal", "reject"]
+      : r.status === "rushed" || r.status === "normal" ? ["reject"] : [];
+  const rushNote = r.status === "pending" && r.priority === "high" && !canRush
+    ? "Rushing to production needs the rush:update permission." : "";
   const status = STATUS[r.status];
 
   const decide = () => {
@@ -164,9 +171,10 @@ function ReviewCard({ review: r, index, canDecide, onDecided, onError }: {
           </div>
         ) : (
           <div className="release-actions">
+            {rushNote ? <span className="faint rush-note">{rushNote}</span> : null}
             {actions.map((d) => (
               <button key={d} type="button"
-                className={`capsule${d === "rush" ? ` primary${r.priority === "high" ? " rush" : ""}` : ""}${d === "reject" ? " danger-text" : ""}`}
+                className={`capsule${d === "rush" ? " primary rush" : ""}${d === "normal" && !rushable ? " primary" : ""}${d === "reject" ? " danger-text" : ""}`}
                 onClick={() => setPending(d)}>
                 {d === "rush" ? <Icon name="rocket" size={12} /> : null}
                 {DECISIONS[d].label}
@@ -193,25 +201,64 @@ function Notes({ review: r }: { review: ReleaseReview }) {
   if (n.status === "failed") {
     return <div className="notes waiting"><Icon name="alert" size={12} />Couldn't read the release notes ({n.attempts} tries): {n.error}</div>;
   }
+  // Reads from older advisors carry only the long form: lead with its first sentence.
+  const headline = n.headline || firstSentence(n.summary);
+  const hosts = uniqueHosts(n.sources);
   return (
     <div className="notes">
       <div className="notes-h">
         <Icon name="spark" size={12} />
         <span>Claude's read</span>
         {n.recommendation ? <span className={`advice ${n.recommendation}`}>advises {n.recommendation}</span> : null}
-        <span className="faint notes-meta">{n.model ? `${n.model} · ` : ""}{when(n.at)}</span>
+        {n.exploited ? <span className="advice high">exploited</span> : null}
+        <span className="faint notes-meta" title={n.model}>{shortModel(n.model)}{n.model ? " · " : ""}{when(n.at)}</span>
       </div>
-      <p className="notes-summary">{n.summary}</p>
-      {n.rationale ? <p className="notes-rationale faint">{n.rationale}</p> : null}
-      {n.sources.length > 0 ? (
+      <div className="notes-headline">{headline}</div>
+      {n.highlights.length > 0 ? (
+        <ul className="notes-points">{n.highlights.map((h) => <li key={h}>{h}</li>)}</ul>
+      ) : null}
+      {n.caveats.length > 0 ? (
+        <ul className="notes-caveats">{n.caveats.map((c) => <li key={c}><Icon name="alert" size={11} />{c}</li>)}</ul>
+      ) : null}
+      {n.rationale ? <div className="notes-why"><span className="faint">Why</span>{n.rationale}</div> : null}
+      {hosts.length > 0 ? (
         <div className="notes-sources">
-          {n.sources.map((s) => (
-            <a key={s} href={s} target="_blank" rel="noreferrer noopener">{hostOf(s)}</a>
-          ))}
+          <span className="faint">Sources</span>
+          {hosts.map(([host, url]) => <a key={host} href={url} target="_blank" rel="noreferrer noopener">{host}</a>)}
         </div>
+      ) : null}
+      {n.summary && n.summary !== headline ? (
+        <details className="notes-more">
+          <summary>More details</summary>
+          <p>{n.summary}</p>
+          {n.sources.length > hosts.length ? (
+            <ul className="notes-urls">{n.sources.map((u) => <li key={u}><a href={u} target="_blank" rel="noreferrer noopener">{u}</a></li>)}</ul>
+          ) : null}
+        </details>
       ) : null}
     </div>
   );
+}
+
+function firstSentence(s: string) {
+  const m = s.match(/^.*?[.!?](\s|$)/);
+  return (m ? m[0] : s).trim();
+}
+
+function uniqueHosts(urls: string[]): [string, string][] {
+  const seen = new Map<string, string>();
+  for (const u of urls) {
+    const h = hostOf(u);
+    if (!seen.has(h)) seen.set(h, u);
+  }
+  return [...seen.entries()];
+}
+
+/** The CLI reports every model it used (a small one summarises fetched pages); show the main one. */
+function shortModel(models?: string) {
+  if (!models) return "";
+  const list = models.split(",");
+  return list.find((m) => !m.includes("haiku")) ?? list[0];
 }
 
 function CVEChip({ c }: { c: ReleaseCVE }) {

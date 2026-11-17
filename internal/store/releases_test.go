@@ -11,7 +11,10 @@ import (
 	"github.com/Arequ/mission-control/internal/vuln"
 )
 
-var reviewer = model.Principal{Kind: "session", ID: "sam", Name: "sam@example.com"}
+var reviewer = model.Principal{Kind: "session", ID: "sam", Name: "sam@example.com", Scopes: map[string]bool{"releases:update": true, "rush:update": true}}
+
+// A reviewer who decides releases but was not granted rush:update.
+var deciderOnly = model.Principal{Kind: "session", ID: "ops", Name: "ops@example.com", Scopes: map[string]bool{"releases:update": true}}
 var advisorP = model.Principal{Kind: "api", ID: "advisor", Name: "advisor"}
 
 func releaseStore(t *testing.T) *Store {
@@ -94,6 +97,10 @@ func TestReleaseReviewScoresFixesAgainstProduction(t *testing.T) {
 	if r.Priority != "low" {
 		t.Fatalf("priority %s %v", r.Priority, r.Reasons)
 	}
+	// A LOW build cannot be rushed, even by someone allowed to rush.
+	if _, err := st.DecideRelease(ctx, reviewer, r.ID, model.ReleaseDecision{Decision: "rush"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("rushed a LOW build: %v", err)
+	}
 
 	// CISA lists one as exploited: the same build becomes a rush candidate.
 	if _, err := st.pool.Exec(ctx, `UPDATE vuln_cves SET kev=true WHERE cve_id='CVE-2024-11395'`); err != nil {
@@ -111,7 +118,11 @@ func TestReleaseReviewScoresFixesAgainstProduction(t *testing.T) {
 		t.Fatalf("HIGH promoted itself to %s", pkg.Catalog)
 	}
 
-	// A reviewer rushes it: straight to production, audited.
+	// releases:update alone decides reviews but cannot skip the soak.
+	if _, err := st.DecideRelease(ctx, deciderOnly, r.ID, model.ReleaseDecision{Decision: "rush"}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("rush without rush:update: %v", err)
+	}
+	// A reviewer with rush:update rushes it: straight to production, audited.
 	r, err := st.DecideRelease(ctx, reviewer, r.ID, model.ReleaseDecision{Decision: "rush", Note: "exploited in the wild"})
 	if err != nil {
 		t.Fatal(err)
