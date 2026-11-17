@@ -1582,9 +1582,9 @@ html.dark .release { background: rgba(255, 255, 255, 0.035); }
   font-size: 12.5px;
 }
 .notes.waiting { display: flex; align-items: center; gap: 6px; color: var(--text-3); background: transparent; }
-.notes-h { display: flex; align-items: center; gap: 6px; font-weight: 650; color: var(--purple); }
+.notes-h { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-weight: 650; color: var(--purple); }
 .notes-meta { margin-left: auto; font-weight: 500; font-size: 11px; }
-.advice { height: 18px; display: inline-flex; align-items: center; padding: 0 7px; border-radius: 6px; font-size: 10.5px; font-weight: 650; }
+.advice { height: 18px; display: inline-flex; align-items: center; padding: 0 7px; border-radius: 6px; font-size: 10.5px; font-weight: 650; white-space: nowrap; }
 .advice.high { background: var(--red-bg); color: var(--red); }
 .advice.low { background: var(--gray-bg); color: var(--gray); }
 .notes-summary { margin: 6px 0 0; line-height: 1.45; }
@@ -1611,6 +1611,7 @@ html.dark .release { background: rgba(255, 255, 255, 0.035); }
 .release-perm { padding: 0 4px; font-size: 12px; }
 @media (max-width: 520px) {
   .release-h { flex-wrap: wrap; }
+  .release-id { flex: 1 1 calc(100% - 46px); }
   .cve-label { width: 100%; }
   .release-actions .capsule { flex: 1; }
 }

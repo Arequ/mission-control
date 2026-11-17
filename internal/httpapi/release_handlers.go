@@ -48,7 +48,7 @@ func (s *Server) decideReleaseReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) evaluateReleaseReview(w http.ResponseWriter, r *http.Request) {
-	if err := s.store.EvaluateRelease(r.Context(), r.PathValue("id")); err != nil {
+	if err := s.store.RefreshRelease(r.Context(), r.PathValue("id")); err != nil {
 		s.writeStoreErr(w, err)
 		return
 	}

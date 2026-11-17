@@ -185,6 +185,8 @@ Ordered by what blocks a real fleet:
 
 ## Pitfalls
 
+- NVD answers an invalid API key with 404, not 401. `examples/terraform` sends the placeholder `example-nvd-api-key`, so in the compose demo every NVD lookup fails (`nvd status 404: NVD rejects an invalid API key`) and release-notes CVEs stay unscored. Pass a real `nvd_api_key`, or clear the stored key, then `POST /api/v1/release-reviews/{id}/evaluate` to look the CVEs up again.
+
 - `MC_DEV_SEED=1` inserts the same names as `examples/terraform`, including `mc_dev_enroll_secret`. Apply the example to a database that was not seeded. Compose sets `MC_DEV_SEED=0`.
 - The browser host must match `MC_PUBLIC_URL`. `localhost` and `127.0.0.1` are different cookie hosts.
 - Elasticsearch 8 treats `logs-*-*` as data streams. Writes use the `create` op. The smoke seed uses `logs-munki.install-demo` and the same pattern for the other three indexes.

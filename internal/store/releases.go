@@ -538,6 +538,22 @@ func (s *Store) FailReleaseNotes(ctx context.Context, p model.Principal, id, msg
 	return s.auditNow(ctx, p, "notes_fail", "release_review", id, map[string]any{"error": clip(msg, 200)})
 }
 
+// RefreshRelease looks up the CVEs a pending review's notes named that still
+// have no NVD score, then re-scores it. Use it after fixing feed settings.
+func (s *Store) RefreshRelease(ctx context.Context, id string) error {
+	var cves []string
+	var status string
+	if err := s.pool.QueryRow(ctx, `SELECT status, notes_cves FROM release_reviews WHERE id=$1`, id).Scan(&status, &cves); err != nil {
+		return notFound(err)
+	}
+	if status == "pending" && len(cves) > 0 {
+		if err := s.enrichCVEs(ctx, cves); err != nil {
+			slog.Warn("release notes cve lookup", "review", id, "err", err.Error())
+		}
+	}
+	return s.EvaluateRelease(ctx, id)
+}
+
 // ReevaluatePendingReleases re-scores every pending review after a feed sync.
 func (s *Store) ReevaluatePendingReleases(ctx context.Context) error {
 	rows, err := s.pool.Query(ctx, `SELECT id FROM release_reviews WHERE status='pending'`)

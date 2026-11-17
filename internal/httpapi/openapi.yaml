@@ -660,7 +660,7 @@ paths:
     parameters: [{ $ref: "#/components/parameters/id" }]
     post:
       tags: [munki]
-      summary: Re-score a pending review from the current feeds. releases:write.
+      summary: Look up unscored CVEs the notes named, then re-score a pending review. releases:write.
       responses:
         "200": { description: review }
   /api/v1/release-reviews/lease:

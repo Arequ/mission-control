@@ -195,3 +195,21 @@ func TestNVDJSONRoundTripRejectsKeyInQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestNVDInvalidKeyIsNamed(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("apiKey") == "" || r.URL.Query().Get("cveId") != "CVE-2026-0001" {
+			t.Errorf("request %v %s", r.Header, r.URL.RawQuery)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer ts.Close()
+	c := &NVDClient{Base: ts.URL, Key: "example-nvd-api-key", HTTP: ts.Client(), Sleep: func(context.Context, time.Duration) error { return nil }}
+	_, err := c.Fetch(context.Background(), NVDQuery{CVEID: "CVE-2026-0001"})
+	if err == nil || !strings.Contains(err.Error(), "invalid API key") || strings.Contains(err.Error(), "example-nvd-api-key") {
+		t.Fatalf("err %v", err)
+	}
+	if _, err := c.Fetch(context.Background(), NVDQuery{CVEID: "not-a-cve"}); err == nil {
+		t.Fatal("malformed cve id fetched")
+	}
+}

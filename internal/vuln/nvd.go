@@ -496,6 +496,10 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 		return NVDPage{}, res.StatusCode, 0, err
 	}
 	if res.StatusCode >= 300 {
+		if res.StatusCode == http.StatusNotFound && c.Key != "" {
+			// NVD answers an unknown apiKey with 404, not 401 or 403.
+			return NVDPage{}, res.StatusCode, 0, fmt.Errorf("nvd status 404: NVD rejects an invalid API key with 404; check nvd_api_key")
+		}
 		return NVDPage{}, res.StatusCode, retryAfter(res, c.now()), fmt.Errorf("nvd status %d", res.StatusCode)
 	}
 	page, err := ParseNVD(body)
