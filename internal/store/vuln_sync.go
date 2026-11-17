@@ -100,6 +100,10 @@ func (s *Store) syncVulnerabilities(ctx context.Context, feeds vuln.Feeds) error
 	if err := s.CorrelateVulnerabilities(ctx, true); err != nil {
 		return err
 	}
+	if err := s.ReevaluatePendingReleases(ctx); err != nil {
+		errs = append(errs, "release reviews: "+err.Error())
+		msg = strings.Join(errs, "; ")
+	}
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", msg)
 	}

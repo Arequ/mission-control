@@ -45,6 +45,17 @@ info:
     logs, munki, osquery, releases, runners, and vuln. config:write,
     config:update, and * cannot be granted to a custom role. A user holds the
     union of every role their groups match, resolved again on each request.
+    Every imported build opens a release review. The server scores it from the
+    vulnerability feeds against the version in the final catalog: HIGH when it
+    fixes a CVE that is in KEV, CVSS 9.0 or more, or CVSS 7.0 or more with EPSS
+    0.10 or more; LOW otherwise. Nothing promotes on a HIGH by itself.
+    releases:update decides (rush to the final catalog, normal soak track, or
+    reject, which moves the build to the "rejected" catalog and is allowed
+    after shipping). The release-notes advisor (cmd/mc-advisor, the Claude
+    Code CLI) holds releases:write: it leases a review, reports a summary,
+    CVE IDs, and its own high or low read, and cannot decide. CVE IDs it
+    reports are looked up in NVD, KEV, and EPSS; its recommendation never
+    changes the priority.
 servers:
   - url: /
 security:
@@ -617,6 +628,67 @@ paths:
         - $ref: "#/components/parameters/id"
       responses:
         "200": { description: promoted package }
+  /api/v1/release-reviews:
+    get:
+      tags: [munki]
+      summary: Release reviews, pending first. releases:read.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, rushed, normal, rejected, superseded] } }
+      responses:
+        "200": { description: reviews }
+  /api/v1/release-reviews/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [munki]
+      summary: One review with the CVEs it fixes and still carries, and the advisor's notes. releases:read.
+      responses:
+        "200": { description: review }
+  /api/v1/release-reviews/{id}/decide:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Decide a review. releases:update. Body {"decision":"rush"|"normal"|"reject","note":"..."}.
+      description: >
+        rush moves a pending build to the final catalog now. normal leaves it on
+        the soak schedule. reject moves it to the rejected catalog; it is allowed
+        on pending, rushed, and normal reviews.
+      responses:
+        "200": { description: decided review }
+        "400": { description: unknown decision }
+        "409": { description: the review cannot take that decision now }
+  /api/v1/release-reviews/{id}/evaluate:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Re-score a pending review from the current feeds. releases:write.
+      responses:
+        "200": { description: review }
+  /api/v1/release-reviews/lease:
+    post:
+      tags: [munki]
+      summary: Advisor leases the next review whose release notes are unread (10 minutes). releases:write.
+      responses:
+        "200": { description: task }
+        "204": { description: nothing to research }
+  /api/v1/release-reviews/{id}/notes:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Advisor reports findings for a leased review. releases:write.
+      description: >
+        Fields are validated: recommendation is high or low, CVE IDs must be
+        well formed, sources must be https. Named CVEs are fetched from NVD,
+        KEV, and EPSS, and the review is re-scored.
+      responses:
+        "200": { description: review }
+        "409": { description: not leased }
+  /api/v1/release-reviews/{id}/notes-failed:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Advisor reports a failure. The review is retried up to three times. releases:write.
+      responses:
+        "204": { description: recorded }
   /api/v1/promotions/run:
     post:
       tags: [munki]
