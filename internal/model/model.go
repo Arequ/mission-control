@@ -22,10 +22,12 @@ func (p Principal) Allows(scope string) bool {
 	if p.Scopes["*"] || p.Scopes[scope] {
 		return true
 	}
+	// write or update on an area implies read on it. write and update stay
+	// separate, so a role can decide reviews without triggering runs.
 	const read = ":read"
 	if len(scope) > len(read) && scope[len(scope)-len(read):] == read {
-		write := scope[:len(scope)-len(read)] + ":write"
-		return p.Scopes[write]
+		area := scope[:len(scope)-len(read)]
+		return p.Scopes[area+":write"] || p.Scopes[area+":update"]
 	}
 	return false
 }
@@ -112,17 +114,17 @@ type RunnerPool struct {
 
 // Manifest is a Munki manifest. It is config, served read-only to clients.
 type Manifest struct {
-	ID                string    `json:"id"`
-	Name              string    `json:"name"`
-	Catalogs          []string  `json:"catalogs"`
-	IncludedManifests []string  `json:"included_manifests"`
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Catalogs          []string          `json:"catalogs"`
+	IncludedManifests []string          `json:"included_manifests"`
 	ManagedInstalls   []string          `json:"managed_installs"`
 	OptionalInstalls  []string          `json:"optional_installs"`
 	ManagedUninstalls []string          `json:"managed_uninstalls"`
 	ConditionalItems  []ConditionalItem `json:"conditional_items"`
 	ManagedBy         string            `json:"managed_by"`
-	CreatedAt         time.Time `json:"created_at"`
-	UpdatedAt         time.Time `json:"updated_at"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
 // Runner is a registered mc-runner agent.

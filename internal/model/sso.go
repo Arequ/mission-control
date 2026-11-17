@@ -44,11 +44,27 @@ type RoleBinding struct {
 	UpdatedAt  time.Time `json:"updated_at"`
 }
 
+// Role is a Terraform-defined set of permissions an IdP group can be bound to.
+// Permissions are "<area>:<read|write|update>".
+type Role struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Permissions []string  `json:"permissions"`
+	ManagedBy   string    `json:"managed_by"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
 // SessionUser is the signed-in browser identity. CSRFToken is not a credential
 // by itself; state-changing requests must send it with the session cookie.
+// Role is the one shown in the menu; Roles and Permissions are everything the
+// user's groups matched, so the UI can hide actions the server would refuse.
 type SessionUser struct {
-	Email     string `json:"email"`
-	Name      string `json:"name"`
-	Role      string `json:"role"`
-	CSRFToken string `json:"csrf_token"`
+	Email       string   `json:"email"`
+	Name        string   `json:"name"`
+	Role        string   `json:"role"`
+	Roles       []string `json:"roles"`
+	Permissions []string `json:"permissions"`
+	CSRFToken   string   `json:"csrf_token"`
 }

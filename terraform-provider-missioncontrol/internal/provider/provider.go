@@ -94,6 +94,7 @@ func (p *mcProvider) Resources(_ context.Context) []func() resource.Resource {
 		newMunkiClientResource,
 		newSSOProviderResource,
 		newRoleBindingResource,
+		newRoleResource,
 		newSourceConnectorResource,
 		newLogViewResource,
 		newVulnerabilitySettingsResource,

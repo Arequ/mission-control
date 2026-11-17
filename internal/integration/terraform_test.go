@@ -57,6 +57,13 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("copy example: %v %s", err, out)
 	}
+	// make demo leaves state next to the example. Copied in, it would plan
+	// against the demo's resources instead of this test's empty database.
+	for _, leftover := range []string{"terraform.tfstate", "terraform.tfstate.backup", ".terraform", ".terraform.lock.hcl"} {
+		if err := os.RemoveAll(filepath.Join(work, leftover)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	run := func(args ...string) string {
 		t.Helper()
