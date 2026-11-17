@@ -1625,3 +1625,33 @@ html.dark .release { background: rgba(255, 255, 255, 0.035); }
   .cve-label { width: 100%; }
   .release-actions .capsule { flex: 1; }
 }
+
+/* NVD mapping proposals (Munki › NVD). Read-only; the block is pasted into the config repo. */
+.cpe-key { flex: none; font-size: 11.5px; padding: 3px 8px; border-radius: 7px; background: var(--field); box-shadow: inset 0 0 0 1px var(--card-border); }
+.cpe-hcl-wrap { margin-top: 10px; }
+.cpe-hcl {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--card-border);
+  font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+}
+.cpe-meta { margin-right: auto; font-size: 11px; }
+div.cpe-meta { margin-top: 8px; }
+.cpe-cands { margin-top: 8px; }
+.cpe-cand-rows { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.cpe-cand { display: grid; grid-template-columns: minmax(140px, 220px) 1fr auto; gap: 10px; align-items: baseline; padding: 4px 8px; border-radius: 7px; font-size: 11.5px; }
+.cpe-cand.on { background: var(--field); }
+.cpe-score { font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 640px) {
+  .cpe-cand { grid-template-columns: 1fr; gap: 2px; }
+  .release-h .cpe-key { display: none; }
+}
+.cpe-caveat { display: flex; align-items: flex-start; gap: 5px; margin: 0 0 6px; }

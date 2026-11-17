@@ -1541,6 +1541,37 @@ paths:
       summary: Run one feed sync now. No-ops the network when feeds are not configured on the server.
       responses:
         "200": { description: settings }
+  /api/v1/cpe-proposals:
+    get:
+      tags: [vuln]
+      summary: Suggested NVD products for Munki items with no mapping. vuln:read.
+      description: >
+        Read-only. Each proposal carries the cpe_override blocks to add to the config repo
+        (vulnerabilities/settings.tf); the server never applies a proposal. Only confidence
+        "high" is a clear single match. "medium" and "low" set needs_review and list the
+        candidates a person picks from. Items that gained a mapping since their lookup are left out.
+      responses:
+        "200":
+          description: proposals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CPEProposalList" }
+  /api/v1/cpe-proposals/refresh:
+    post:
+      tags: [vuln]
+      summary: Look up one paced batch of unmapped Munki items in the NVD CPE dictionary now. vuln:write.
+      description: >
+        Uses the name, pkginfo display_name and developer, and the installs bundle id. At most 5
+        requests without an NVD API key (NVD allows 5 per 30 s) and 30 with one. Waits for a running
+        vulnerability sync. The scheduled sync also runs a smaller batch. An invalid API key (NVD answers 404)
+        stops the batch and is reported as 400.
+      responses:
+        "200":
+          description: proposals after the batch; looked_up is how many items were searched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CPEProposalList" }
+        "400": { description: feeds not configured, NVD disabled, or an NVD error }
   /api/v1/devices/{id}/vulnerabilities:
     get:
       tags: [vuln]
@@ -1565,6 +1596,43 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    CPEProposalList:
+      type: object
+      properties:
+        proposals: { type: array, items: { $ref: "#/components/schemas/CPEProposal" } }
+        waiting: { type: integer, description: unmapped items not looked up yet }
+        looked_up: { type: integer }
+    CPEProposal:
+      type: object
+      properties:
+        name: { type: string, description: Munki item name }
+        display_name: { type: string }
+        developer: { type: string }
+        bundle_id: { type: string }
+        keyword: { type: string, description: the keywordSearch that produced the proposal }
+        status: { type: string, enum: [proposed, no_match, error] }
+        confidence: { type: string, enum: [high, medium, low, none] }
+        needs_review: { type: boolean }
+        part: { type: string }
+        vendor: { type: string }
+        product: { type: string }
+        evidence: { type: array, items: { type: string } }
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              part: { type: string }
+              vendor: { type: string }
+              product: { type: string }
+              title: { type: string }
+              entries: { type: integer }
+              score: { type: integer }
+              exact: { type: boolean }
+              evidence: { type: array, items: { type: string } }
+        error: { type: string }
+        looked_up_at: { type: string, format: date-time }
+        terraform: { type: string, description: cpe_override blocks to paste into the config repo; empty without a proposal }
     KeelEnrollSecretWrite:
       type: object
       required: [name, secret]

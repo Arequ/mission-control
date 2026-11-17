@@ -179,3 +179,33 @@ type IssueFilter struct {
 	Offset   int
 	DeviceID string
 }
+
+// CPEProposal is a suggested NVD product for a Munki item that has no
+// mapping. It is advice: the mapping takes effect only when the Terraform
+// block is added to the config repo.
+type CPEProposal struct {
+	Name        string          `json:"name"`
+	DisplayName string          `json:"display_name"`
+	Developer   string          `json:"developer"`
+	BundleID    string          `json:"bundle_id"`
+	Keyword     string          `json:"keyword"`
+	Status      string          `json:"status"`
+	Confidence  string          `json:"confidence"`
+	NeedsReview bool            `json:"needs_review"`
+	Part        string          `json:"part"`
+	Vendor      string          `json:"vendor"`
+	Product     string          `json:"product"`
+	Evidence    []string        `json:"evidence"`
+	Candidates  json.RawMessage `json:"candidates"`
+	Error       string          `json:"error"`
+	LookedUpAt  time.Time       `json:"looked_up_at"`
+	Terraform   string          `json:"terraform"`
+}
+
+// CPEProposalList is the proposals plus how many unmapped items still wait
+// for a lookup.
+type CPEProposalList struct {
+	Proposals []CPEProposal `json:"proposals"`
+	Waiting   int           `json:"waiting"`
+	LookedUp  int           `json:"looked_up,omitempty"`
+}
