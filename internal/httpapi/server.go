@@ -313,6 +313,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/vulnerability-issues/{id}/notes", s.withAPI("vuln:write", http.HandlerFunc(s.addVulnerabilityNote)))
 	mux.Handle("POST /api/v1/vulnerability-issues/{id}/run-recipe", s.withAPI("vuln:write", http.HandlerFunc(s.runVulnerabilityRecipe)))
 	mux.Handle("POST /api/v1/vulnerabilities/sync", s.withAPI("vuln:write", http.HandlerFunc(s.syncVulnerabilities)))
+	mux.Handle("GET /api/v1/cpe-proposals", s.withAPI("vuln:read", http.HandlerFunc(s.listCPEProposals)))
+	mux.Handle("POST /api/v1/cpe-proposals/refresh", s.withAPI("vuln:write", http.HandlerFunc(s.refreshCPEProposals)))
 	mux.Handle("GET /api/v1/devices/{id}/vulnerabilities", s.withAPI("vuln:read", http.HandlerFunc(s.deviceVulnerabilities)))
 
 	mux.HandleFunc("POST /enroll", s.osqueryEnroll)

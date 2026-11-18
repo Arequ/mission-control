@@ -63,6 +63,17 @@ func (s *Store) syncVulnerabilities(ctx context.Context, feeds vuln.Feeds) error
 			errs = append(errs, nerr.Error())
 		}
 	}
+	// CPE proposals share NVD's rate limit. When the CVE sync just failed
+	// (rate limit, bad key, network) they would fail the same way.
+	if settings.NVDEnabled && len(errs) == 0 {
+		budget := cpeScheduledCalls
+		if strings.TrimSpace(key) != "" {
+			budget = cpeScheduledCallsKeyed
+		}
+		if _, perr := s.proposeCPEs(ctx, feeds, settings, key, budget); perr != nil {
+			errs = append(errs, perr.Error())
+		}
+	}
 	if settings.KEVEnabled {
 		if kerr := s.syncKEV(ctx, feeds, now); kerr != nil {
 			errs = append(errs, kerr.Error())

@@ -400,6 +400,36 @@ export type VulnerabilityIssue = {
   fix: IssueFix;
 };
 
+export type CPECandidate = {
+  part: string;
+  vendor: string;
+  product: string;
+  title: string;
+  entries: number;
+  score: number;
+  exact: boolean;
+  evidence: string[];
+};
+
+export type CPEProposal = {
+  name: string;
+  display_name: string;
+  developer: string;
+  bundle_id: string;
+  keyword: string;
+  status: "proposed" | "no_match" | "error";
+  confidence: "high" | "medium" | "low" | "none";
+  needs_review: boolean;
+  part: string;
+  vendor: string;
+  product: string;
+  evidence: string[];
+  candidates: CPECandidate[];
+  error: string;
+  looked_up_at: string;
+  terraform: string;
+};
+
 export type VulnerabilitySummary = {
   open: number;
   kev: number;
@@ -728,6 +758,7 @@ export const api = {
     request<LogPage>(`/api/v1/log-views/${id}/tail`, { method: "POST", body: JSON.stringify(body) }),
   contextLog: (id: string, body: { device_id?: string; line_id: string; before: number; after: number }) =>
     request<LogContext>(`/api/v1/log-views/${id}/context`, { method: "POST", body: JSON.stringify(body) }),
+  cpeProposals: () => request<{ proposals: CPEProposal[]; waiting: number }>("/api/v1/cpe-proposals"),
   vulnerabilityIssues: (params: IssueQuery = {}) => {
     const q = new URLSearchParams();
     if (params.kev != null) q.set("kev", String(params.kev));
