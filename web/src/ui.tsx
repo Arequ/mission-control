@@ -257,8 +257,16 @@ function Segment({ items }: { items: { to: string; label: string; on: (path: str
   );
 }
 
+// The full label sits in the page header. Inline (small) badges are a purple lock with the label as its tooltip.
 export function Managed({ small }: { small?: boolean }) {
-  return <span className={`tf${small ? " sm" : ""}`}><Icon name="lock" size={11} />Managed by Terraform</span>;
+  if (small) {
+    return (
+      <span className="tf lock" role="img" aria-label="Managed by Terraform" title="Managed by Terraform">
+        <Icon name="lock" size={11} />
+      </span>
+    );
+  }
+  return <span className="tf"><Icon name="lock" size={11} />Managed by Terraform</span>;
 }
 
 export function ProposeChange({ kind }: { kind: ConfigKind }) {
@@ -311,14 +319,14 @@ export function StatusPill({ status, result }: { status?: string; result?: strin
   );
 }
 
-export function Mark({ name }: { name: string }) {
+export function Mark({ name, size }: { name: string; size?: "xl" }) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
   const hue = h % 360;
   const letter = name.trim().charAt(0).toUpperCase() || "•";
   return (
     <span
-      className="appic"
+      className={`appic${size ? ` ${size}` : ""}`}
       style={{ background: `linear-gradient(145deg, hsl(${hue} 78% 62%), hsl(${(hue + 28) % 360} 68% 42%))` }}
     >
       {letter}
