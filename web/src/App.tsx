@@ -7,6 +7,7 @@ import { DevicePage } from "./pages/Device";
 import { DevicesPage } from "./pages/Devices";
 import { ConfigurationPage } from "./pages/Configuration";
 import { ManifestsPage, MunkiPage } from "./pages/Munki";
+import { ReleasesPage } from "./pages/Releases";
 import { OverviewPage } from "./pages/Overview";
 import { LiveQueryPage, QueriesPage } from "./pages/Queries";
 import { RunnersPage } from "./pages/Runners";
@@ -65,6 +66,7 @@ function Authed() {
         <Route path="runners" element={<RunnersPage />} />
         <Route path="munki" element={<MunkiPage />} />
         <Route path="munki/manifests" element={<ManifestsPage />} />
+        <Route path="munki/releases" element={<ReleasesPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

@@ -434,6 +434,22 @@ func TestTerraformProviderCRUD(t *testing.T) {
 		t.Fatalf("vulnerability settings: %s", vulnSettings)
 	}
 
+	// A fresh database behind existing state (make demo after down -v) has
+	// no stored NVD key. The next apply resends the write-only key; the
+	// provider must not promise the stale has_nvd_api_key=false from state.
+	if _, err := st.Pool().Exec(ctx, `UPDATE vulnerability_settings SET nvd_api_key='' WHERE id='default'`); err != nil {
+		t.Fatal(err)
+	}
+	run("apply", "-auto-approve", "-input=false",
+		"-var", "endpoint="+ts.URL,
+		"-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4",
+		"-var", "soak_days=3",
+	)
+	if got := apiGet(t, ts.URL, "/api/v1/vulnerability-settings"); !strings.Contains(got, `"has_nvd_api_key":true`) {
+		t.Fatalf("key not restored after server lost it: %s", got)
+	}
+
 	if _, err := st.Pool().Exec(ctx, `UPDATE osquery_queries SET sql='SELECT 1' WHERE name='launch_daemons'`); err != nil {
 		t.Fatal(err)
 	}

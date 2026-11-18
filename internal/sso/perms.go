@@ -7,7 +7,9 @@ import (
 )
 
 // Areas are the parts of Mission Control a permission can name.
-var Areas = []string{"audit", "config", "jobs", "keel", "logs", "munki", "osquery", "releases", "runners", "vuln"}
+// rush is its own area so skipping the soak can be granted apart from
+// deciding reviews: rush:update moves a HIGH build straight to production.
+var Areas = []string{"audit", "config", "jobs", "keel", "logs", "munki", "osquery", "releases", "runners", "rush", "vuln"}
 
 // Actions are read (view), write (create or trigger), and update (change or decide).
 // Holding write or update on an area also allows read on it; write and update

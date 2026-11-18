@@ -332,6 +332,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/packages", s.withAPI("munki:read", http.HandlerFunc(s.listPackages)))
 	mux.Handle("GET /api/v1/packages/{id}", s.withAPI("munki:read", http.HandlerFunc(s.getPackage)))
 	mux.Handle("POST /api/v1/packages/{id}/promote", s.withAPI("munki:write", http.HandlerFunc(s.promotePackage)))
+	// Release reviews: people with releases:update decide; the release-notes
+	// advisor holds releases:write and can only lease, report, and re-score.
+	mux.Handle("GET /api/v1/release-reviews", s.withAPI("releases:read", http.HandlerFunc(s.listReleaseReviews)))
+	mux.Handle("GET /api/v1/release-reviews/{id}", s.withAPI("releases:read", http.HandlerFunc(s.getReleaseReview)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/decide", s.withAPI("releases:update", http.HandlerFunc(s.decideReleaseReview)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/evaluate", s.withAPI("releases:write", http.HandlerFunc(s.evaluateReleaseReview)))
+	mux.Handle("POST /api/v1/release-reviews/lease", s.withAPI("releases:write", http.HandlerFunc(s.leaseReleaseNotes)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/notes", s.withAPI("releases:write", http.HandlerFunc(s.submitReleaseNotes)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/notes-failed", s.withAPI("releases:write", http.HandlerFunc(s.failReleaseNotes)))
 	mux.Handle("POST /api/v1/promotions/run", s.withAPI("munki:write", http.HandlerFunc(s.runPromotions)))
 
 	mux.Handle("POST /api/v1/runners/register", s.withBootstrap(http.HandlerFunc(s.registerRunner)))

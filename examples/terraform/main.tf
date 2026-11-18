@@ -108,6 +108,20 @@ resource "missioncontrol_role" "it_ops" {
   permissions = ["munki:read", "releases:update", "vuln:read"]
 }
 
+# Skipping the soak is granted on its own. rush:update moves a build the
+# CVE feeds rate HIGH straight to production; nothing else can.
+resource "missioncontrol_role" "it_release_approvers" {
+  name        = "it-release-approvers"
+  description = "Release approvers: may rush a HIGH priority build to production."
+  permissions = ["releases:update", "rush:update", "vuln:read"]
+}
+
+resource "missioncontrol_role_binding" "it_release_approvers" {
+  provider_id = missioncontrol_sso_provider.dex.id
+  group       = "IT Release Approvers"
+  role        = missioncontrol_role.it_release_approvers.name
+}
+
 resource "missioncontrol_role_binding" "it_engineers" {
   provider_id = missioncontrol_sso_provider.dex.id
   group       = "IT Engineers"

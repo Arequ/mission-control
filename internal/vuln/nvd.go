@@ -50,10 +50,12 @@ type ProductBound struct {
 // NVDQuery is one page of the CVE API 2.0.
 type NVDQuery struct {
 	Part, Vendor, Product string
-	Start                 int
-	PerPage               int
-	ModStart              time.Time
-	ModEnd                time.Time
+	// CVEID fetches one record by id instead of by product.
+	CVEID    string
+	Start    int
+	PerPage  int
+	ModStart time.Time
+	ModEnd   time.Time
 }
 
 // NVDPage is one response page.
@@ -445,7 +447,14 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 		per = 200
 	}
 	v := url.Values{}
-	v.Set("virtualMatchString", fmt.Sprintf("cpe:2.3:%s:%s:%s:*:*:*:*:*:*:*", q.Part, q.Vendor, q.Product))
+	if q.CVEID != "" {
+		if !ValidCVE(q.CVEID) {
+			return NVDPage{}, 0, 0, fmt.Errorf("invalid cve id")
+		}
+		v.Set("cveId", q.CVEID)
+	} else {
+		v.Set("virtualMatchString", fmt.Sprintf("cpe:2.3:%s:%s:%s:*:*:*:*:*:*:*", q.Part, q.Vendor, q.Product))
+	}
 	v.Set("resultsPerPage", strconv.Itoa(per))
 	v.Set("startIndex", strconv.Itoa(q.Start))
 	if !q.ModStart.IsZero() {
@@ -487,6 +496,10 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 		return NVDPage{}, res.StatusCode, 0, err
 	}
 	if res.StatusCode >= 300 {
+		if res.StatusCode == http.StatusNotFound && c.Key != "" {
+			// NVD answers an unknown apiKey with 404, not 401 or 403.
+			return NVDPage{}, res.StatusCode, 0, fmt.Errorf("nvd status 404: NVD rejects an invalid API key with 404; check nvd_api_key")
+		}
 		return NVDPage{}, res.StatusCode, retryAfter(res, c.now()), fmt.Errorf("nvd status %d", res.StatusCode)
 	}
 	page, err := ParseNVD(body)
