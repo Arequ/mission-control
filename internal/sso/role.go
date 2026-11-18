@@ -27,6 +27,7 @@ func ScopesForRole(role string) map[string]bool {
 	read := []string{
 		"config:read", "jobs:read", "runners:read", "munki:read",
 		"osquery:read", "audit:read", "logs:read", "vuln:read", "keel:read",
+		"releases:read",
 	}
 	switch role {
 	case RoleAdmin:
@@ -36,7 +37,9 @@ func ScopesForRole(role string) map[string]bool {
 		for _, s := range read {
 			set[s] = true
 		}
-		for _, s := range []string{"jobs:write", "runners:write", "munki:write", "osquery:write", "vuln:write"} {
+		// releases:update decides release reviews (rush, normal track, reject),
+		// next to munki:write, which already promotes by hand.
+		for _, s := range []string{"jobs:write", "runners:write", "munki:write", "osquery:write", "vuln:write", "releases:update"} {
 			set[s] = true
 		}
 		return set
@@ -55,28 +58,16 @@ type Binding struct {
 	Role  string
 }
 
-// MapRole picks the highest role whose group is in groups.
-// A binding group of "*" matches every authenticated user of that provider.
-// No match returns false. Comparison is exact, after trimming is the caller's job.
+// MapRole picks the highest built-in role whose group is in groups. Custom
+// roles are resolved by ResolveAccess; this stays for callers that only know
+// the built-in three.
 func MapRole(groups []string, bindings []Binding) (string, bool) {
-	rank := map[string]int{RoleViewer: 1, RoleOperator: 2, RoleAdmin: 3}
-	have := map[string]bool{}
-	for _, g := range groups {
-		have[g] = true
+	a, ok := ResolveAccess(groups, bindings, nil)
+	if !ok {
+		return "", false
 	}
-	best := 0
-	role := ""
-	for _, b := range bindings {
-		if !ValidRole(b.Role) {
-			continue
-		}
-		if b.Group != "*" && !have[b.Group] {
-			continue
-		}
-		if rank[b.Role] > best {
-			best = rank[b.Role]
-			role = b.Role
-		}
+	if r := a.Primary(); BuiltinRole(r) {
+		return r, true
 	}
-	return role, best > 0
+	return "", false
 }

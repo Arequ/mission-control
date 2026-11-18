@@ -38,6 +38,13 @@ info:
     Keel agents enroll an Ed25519 public key with a Terraform-managed Keel
     enroll secret, then sign every report. Keel reads use keel:read; clearing
     a device key uses keel:admin.
+    Browser access comes from SSO role bindings. A binding names a built-in
+    role (viewer, operator, admin) or a Terraform-managed custom role. A custom
+    role lists permissions of the form <area>:<read|write|update>; write or
+    update on an area implies read on it. Areas are audit, config, jobs, keel,
+    logs, munki, osquery, releases, runners, and vuln. config:write,
+    config:update, and * cannot be granted to a custom role. A user holds the
+    union of every role their groups match, resolved again on each request.
 servers:
   - url: /
 security:
@@ -876,6 +883,35 @@ paths:
       tags: [config]
       responses:
         "204": { description: deleted }
+  /api/v1/sso/roles:
+    get:
+      tags: [config]
+      summary: Custom roles. config:read.
+      responses:
+        "200": { description: roles }
+    post:
+      tags: [config]
+      summary: Create a custom role. config:write and the Terraform client header.
+      responses:
+        "201": { description: created }
+        "400": { description: invalid name or permission }
+  /api/v1/sso/roles/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [config]
+      responses:
+        "200": { description: role }
+    put:
+      tags: [config]
+      summary: Change description and permissions. The name cannot change.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a role no binding uses.
+      responses:
+        "204": { description: deleted }
+        "409": { description: a binding still uses the role }
   /api/v1/sso/role-bindings:
     get:
       tags: [config]
@@ -883,7 +919,7 @@ paths:
         "200": { description: bindings }
     post:
       tags: [config]
-      summary: Map an IdP group to viewer, operator, or admin.
+      summary: Map an IdP group to viewer, operator, admin, or a custom role.
       responses:
         "201": { description: created }
   /api/v1/sso/role-bindings/{id}:
@@ -903,7 +939,7 @@ paths:
   /api/v1/session:
     get:
       tags: [meta]
-      summary: Current browser session. Cookie auth. Returns the CSRF token.
+      summary: Current browser session. Cookie auth. Returns the CSRF token, every matched role, and the resulting permissions.
       responses:
         "200": { description: session }
         "401": { description: signed out }

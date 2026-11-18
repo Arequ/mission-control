@@ -613,12 +613,12 @@ type roleBindingModel struct {
 
 func (r *roleBindingResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Maps an IdP group to viewer, operator, or admin. Those roles use the existing token scopes. A group of * matches every user of the provider. The highest matching role wins. Binding changes apply on the next request; group membership changes apply on the next login.",
+		Description: "Maps an IdP group to a role: viewer, operator, admin, or a missioncontrol_role name. A group of * matches every user of the provider. A user gets the union of every role their groups match. Binding changes apply on the next request; group membership changes apply on the next login.",
 		Attributes: map[string]schema.Attribute{
 			"id":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"provider_id": schema.StringAttribute{Required: true},
 			"group":       schema.StringAttribute{Required: true, Description: "IdP group, or * for every authenticated user of this provider."},
-			"role":        schema.StringAttribute{Required: true, Description: "viewer, operator, or admin."},
+			"role":        schema.StringAttribute{Required: true, Description: "viewer, operator, admin, or the name of a missioncontrol_role."},
 			"managed_by":  schema.StringAttribute{Optional: true, Computed: true, Default: stringdefault.StaticString("terraform")},
 		},
 	}
