@@ -174,6 +174,9 @@ func (s *Store) insertPackage(ctx context.Context, p model.Principal, pkg model.
 		return model.Package{}, false, err
 	}
 	got, err := s.GetPackage(ctx, pkg.ID)
+	if err == nil {
+		s.releaseAfterImport(ctx, got)
+	}
 	return got, true, err
 }
 
@@ -312,6 +315,7 @@ func (s *Store) PromoteDue(ctx context.Context) (int, error) {
 		if err := rows.Err(); err != nil {
 			return n, err
 		}
+		final := finalCatalog(rules)
 		for _, id := range ids {
 			moved, err := s.movePackage(ctx, model.System, id, rule.FromCatalog, rule.ToCatalog, "promote")
 			if err != nil {
@@ -319,6 +323,13 @@ func (s *Store) PromoteDue(ctx context.Context) (int, error) {
 			}
 			if moved {
 				n++
+				if rule.ToCatalog == final {
+					// Reached the end on the normal track. Reject stays available.
+					if _, err := s.pool.Exec(ctx, `UPDATE release_reviews SET status='normal', decided_by='system', decided_at=$2,
+						decision_note='promoted on the soak schedule' WHERE package_id=$1 AND status='pending'`, id, now); err != nil {
+						return n, err
+					}
+				}
 			}
 		}
 	}

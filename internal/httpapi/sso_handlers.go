@@ -135,6 +135,62 @@ func (s *Server) deleteRoleBinding(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) listRoles(w http.ResponseWriter, r *http.Request) {
+	items, err := s.store.ListRoles(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"roles": items})
+}
+
+func (s *Server) createRole(w http.ResponseWriter, r *http.Request) {
+	var in model.Role
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	in.ManagedBy = "terraform"
+	out, err := s.store.CreateRole(r.Context(), principal(r), in)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, out)
+}
+
+func (s *Server) getRole(w http.ResponseWriter, r *http.Request) {
+	out, err := s.store.GetRole(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) updateRole(w http.ResponseWriter, r *http.Request) {
+	var in model.Role
+	if err := readJSON(r, &in); err != nil {
+		badJSON(w, err)
+		return
+	}
+	in.ManagedBy = "terraform"
+	out, err := s.store.UpdateRole(r.Context(), principal(r), r.PathValue("id"), in)
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) deleteRole(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteRole(r.Context(), principal(r), r.PathValue("id")); err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) publicSSOProviders(w http.ResponseWriter, r *http.Request) {
 	items, err := s.store.ListEnabledSSOProviders(r.Context())
 	if err != nil {
@@ -297,7 +353,8 @@ func (s *Server) session(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, model.SessionUser{
-		Email: rec.Email, Name: rec.Name, Role: rec.Role, CSRFToken: rec.CSRF,
+		Email: rec.Email, Name: rec.Name, Role: rec.Role, Roles: rec.Roles,
+		Permissions: sso.Access{Scopes: rec.Scopes}.Permissions(), CSRFToken: rec.CSRF,
 	})
 }
 

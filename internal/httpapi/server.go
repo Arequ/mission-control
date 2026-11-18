@@ -232,6 +232,11 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/sso/config/{id}", s.withAPI("config:read", http.HandlerFunc(s.getSSOProvider)))
 	mux.Handle("PUT /api/v1/sso/config/{id}", s.withConfigWrite(http.HandlerFunc(s.updateSSOProvider)))
 	mux.Handle("DELETE /api/v1/sso/config/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteSSOProvider)))
+	mux.Handle("GET /api/v1/sso/roles", s.withAPI("config:read", http.HandlerFunc(s.listRoles)))
+	mux.Handle("POST /api/v1/sso/roles", s.withConfigWrite(http.HandlerFunc(s.createRole)))
+	mux.Handle("GET /api/v1/sso/roles/{id}", s.withAPI("config:read", http.HandlerFunc(s.getRole)))
+	mux.Handle("PUT /api/v1/sso/roles/{id}", s.withConfigWrite(http.HandlerFunc(s.updateRole)))
+	mux.Handle("DELETE /api/v1/sso/roles/{id}", s.withConfigWrite(http.HandlerFunc(s.deleteRole)))
 	mux.Handle("GET /api/v1/sso/role-bindings", s.withAPI("config:read", http.HandlerFunc(s.listRoleBindings)))
 	mux.Handle("POST /api/v1/sso/role-bindings", s.withConfigWrite(http.HandlerFunc(s.createRoleBinding)))
 	mux.Handle("GET /api/v1/sso/role-bindings/{id}", s.withAPI("config:read", http.HandlerFunc(s.getRoleBinding)))
@@ -308,6 +313,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/vulnerability-issues/{id}/notes", s.withAPI("vuln:write", http.HandlerFunc(s.addVulnerabilityNote)))
 	mux.Handle("POST /api/v1/vulnerability-issues/{id}/run-recipe", s.withAPI("vuln:write", http.HandlerFunc(s.runVulnerabilityRecipe)))
 	mux.Handle("POST /api/v1/vulnerabilities/sync", s.withAPI("vuln:write", http.HandlerFunc(s.syncVulnerabilities)))
+	mux.Handle("GET /api/v1/cpe-proposals", s.withAPI("vuln:read", http.HandlerFunc(s.listCPEProposals)))
+	mux.Handle("POST /api/v1/cpe-proposals/refresh", s.withAPI("vuln:write", http.HandlerFunc(s.refreshCPEProposals)))
 	mux.Handle("GET /api/v1/devices/{id}/vulnerabilities", s.withAPI("vuln:read", http.HandlerFunc(s.deviceVulnerabilities)))
 
 	mux.HandleFunc("POST /enroll", s.osqueryEnroll)
@@ -327,6 +334,15 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/packages", s.withAPI("munki:read", http.HandlerFunc(s.listPackages)))
 	mux.Handle("GET /api/v1/packages/{id}", s.withAPI("munki:read", http.HandlerFunc(s.getPackage)))
 	mux.Handle("POST /api/v1/packages/{id}/promote", s.withAPI("munki:write", http.HandlerFunc(s.promotePackage)))
+	// Release reviews: people with releases:update decide; the release-notes
+	// advisor holds releases:write and can only lease, report, and re-score.
+	mux.Handle("GET /api/v1/release-reviews", s.withAPI("releases:read", http.HandlerFunc(s.listReleaseReviews)))
+	mux.Handle("GET /api/v1/release-reviews/{id}", s.withAPI("releases:read", http.HandlerFunc(s.getReleaseReview)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/decide", s.withAPI("releases:update", http.HandlerFunc(s.decideReleaseReview)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/evaluate", s.withAPI("releases:write", http.HandlerFunc(s.evaluateReleaseReview)))
+	mux.Handle("POST /api/v1/release-reviews/lease", s.withAPI("releases:write", http.HandlerFunc(s.leaseReleaseNotes)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/notes", s.withAPI("releases:write", http.HandlerFunc(s.submitReleaseNotes)))
+	mux.Handle("POST /api/v1/release-reviews/{id}/notes-failed", s.withAPI("releases:write", http.HandlerFunc(s.failReleaseNotes)))
 	mux.Handle("POST /api/v1/promotions/run", s.withAPI("munki:write", http.HandlerFunc(s.runPromotions)))
 
 	mux.Handle("POST /api/v1/runners/register", s.withBootstrap(http.HandlerFunc(s.registerRunner)))

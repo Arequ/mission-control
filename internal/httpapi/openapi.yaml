@@ -38,6 +38,24 @@ info:
     Keel agents enroll an Ed25519 public key with a Terraform-managed Keel
     enroll secret, then sign every report. Keel reads use keel:read; clearing
     a device key uses keel:admin.
+    Browser access comes from SSO role bindings. A binding names a built-in
+    role (viewer, operator, admin) or a Terraform-managed custom role. A custom
+    role lists permissions of the form <area>:<read|write|update>; write or
+    update on an area implies read on it. Areas are audit, config, jobs, keel,
+    logs, munki, osquery, releases, runners, rush, and vuln. config:write,
+    config:update, and * cannot be granted to a custom role. A user holds the
+    union of every role their groups match, resolved again on each request.
+    Every imported build opens a release review. The server scores it from the
+    vulnerability feeds against the version in the final catalog: HIGH when it
+    fixes a CVE that is in KEV, CVSS 9.0 or more, or CVSS 7.0 or more with EPSS
+    0.10 or more; LOW otherwise. Nothing promotes on a HIGH by itself.
+    releases:update decides (rush to the final catalog, normal soak track, or
+    reject, which moves the build to the "rejected" catalog and is allowed
+    after shipping). The release-notes advisor (cmd/mc-advisor, the Claude
+    Code CLI) holds releases:write: it leases a review, reports a summary,
+    CVE IDs, and its own high or low read, and cannot decide. CVE IDs it
+    reports are looked up in NVD, KEV, and EPSS; its recommendation never
+    changes the priority.
 servers:
   - url: /
 security:
@@ -610,6 +628,72 @@ paths:
         - $ref: "#/components/parameters/id"
       responses:
         "200": { description: promoted package }
+  /api/v1/release-reviews:
+    get:
+      tags: [munki]
+      summary: Release reviews, pending first. releases:read.
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, rushed, normal, rejected, superseded] } }
+      responses:
+        "200": { description: reviews }
+  /api/v1/release-reviews/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [munki]
+      summary: One review with the CVEs it fixes and still carries, and the advisor's notes. releases:read.
+      responses:
+        "200": { description: review }
+  /api/v1/release-reviews/{id}/decide:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Decide a review. releases:update; rush also needs rush:update. Body {"decision":"rush"|"normal"|"reject","note":"..."}.
+      description: >
+        rush moves a pending HIGH priority build to the final catalog now. It
+        needs rush:update (403 without it) and a HIGH priority from the feeds
+        (409 for LOW). normal leaves the build on the soak schedule. reject
+        moves it to the rejected catalog; it is allowed on pending, rushed, and
+        normal reviews.
+      responses:
+        "200": { description: decided review }
+        "400": { description: unknown decision }
+        "409": { description: the review cannot take that decision now }
+  /api/v1/release-reviews/{id}/evaluate:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Look up unscored CVEs the notes named, then re-score a pending review. releases:write.
+      responses:
+        "200": { description: review }
+  /api/v1/release-reviews/lease:
+    post:
+      tags: [munki]
+      summary: Advisor leases the next review whose release notes are unread (10 minutes). releases:write.
+      responses:
+        "200": { description: task }
+        "204": { description: nothing to research }
+  /api/v1/release-reviews/{id}/notes:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Advisor reports findings for a leased review. releases:write.
+      description: >
+        The read is a short template: headline (one line), highlights (up to
+        5 fragments), caveats (up to 2), exploited, and a one-line rationale;
+        summary is the long form shown collapsed. Longer values are clipped.
+        Fields are validated: recommendation is high or low, CVE IDs must be
+        well formed, sources must be https. Named CVEs are fetched from NVD,
+        KEV, and EPSS, and the review is re-scored.
+      responses:
+        "200": { description: review }
+        "409": { description: not leased }
+  /api/v1/release-reviews/{id}/notes-failed:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    post:
+      tags: [munki]
+      summary: Advisor reports a failure. The review is retried up to three times. releases:write.
+      responses:
+        "204": { description: recorded }
   /api/v1/promotions/run:
     post:
       tags: [munki]
@@ -876,6 +960,35 @@ paths:
       tags: [config]
       responses:
         "204": { description: deleted }
+  /api/v1/sso/roles:
+    get:
+      tags: [config]
+      summary: Custom roles. config:read.
+      responses:
+        "200": { description: roles }
+    post:
+      tags: [config]
+      summary: Create a custom role. config:write and the Terraform client header.
+      responses:
+        "201": { description: created }
+        "400": { description: invalid name or permission }
+  /api/v1/sso/roles/{id}:
+    parameters: [{ $ref: "#/components/parameters/id" }]
+    get:
+      tags: [config]
+      responses:
+        "200": { description: role }
+    put:
+      tags: [config]
+      summary: Change description and permissions. The name cannot change.
+      responses:
+        "200": { description: updated }
+    delete:
+      tags: [config]
+      summary: Delete a role no binding uses.
+      responses:
+        "204": { description: deleted }
+        "409": { description: a binding still uses the role }
   /api/v1/sso/role-bindings:
     get:
       tags: [config]
@@ -883,7 +996,7 @@ paths:
         "200": { description: bindings }
     post:
       tags: [config]
-      summary: Map an IdP group to viewer, operator, or admin.
+      summary: Map an IdP group to viewer, operator, admin, or a custom role.
       responses:
         "201": { description: created }
   /api/v1/sso/role-bindings/{id}:
@@ -903,7 +1016,7 @@ paths:
   /api/v1/session:
     get:
       tags: [meta]
-      summary: Current browser session. Cookie auth. Returns the CSRF token.
+      summary: Current browser session. Cookie auth. Returns the CSRF token, every matched role, and the resulting permissions.
       responses:
         "200": { description: session }
         "401": { description: signed out }
@@ -1428,6 +1541,37 @@ paths:
       summary: Run one feed sync now. No-ops the network when feeds are not configured on the server.
       responses:
         "200": { description: settings }
+  /api/v1/cpe-proposals:
+    get:
+      tags: [vuln]
+      summary: Suggested NVD products for Munki items with no mapping. vuln:read.
+      description: >
+        Read-only. Each proposal carries the cpe_override blocks to add to the config repo
+        (vulnerabilities/settings.tf); the server never applies a proposal. Only confidence
+        "high" is a clear single match. "medium" and "low" set needs_review and list the
+        candidates a person picks from. Items that gained a mapping since their lookup are left out.
+      responses:
+        "200":
+          description: proposals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CPEProposalList" }
+  /api/v1/cpe-proposals/refresh:
+    post:
+      tags: [vuln]
+      summary: Look up one paced batch of unmapped Munki items in the NVD CPE dictionary now. vuln:write.
+      description: >
+        Uses the name, pkginfo display_name and developer, and the installs bundle id. At most 5
+        requests without an NVD API key (NVD allows 5 per 30 s) and 30 with one. Waits for a running
+        vulnerability sync. The scheduled sync also runs a smaller batch. An invalid API key (NVD answers 404)
+        stops the batch and is reported as 400.
+      responses:
+        "200":
+          description: proposals after the batch; looked_up is how many items were searched
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CPEProposalList" }
+        "400": { description: feeds not configured, NVD disabled, or an NVD error }
   /api/v1/devices/{id}/vulnerabilities:
     get:
       tags: [vuln]
@@ -1452,6 +1596,43 @@ components:
       required: true
       schema: { type: string }
   schemas:
+    CPEProposalList:
+      type: object
+      properties:
+        proposals: { type: array, items: { $ref: "#/components/schemas/CPEProposal" } }
+        waiting: { type: integer, description: unmapped items not looked up yet }
+        looked_up: { type: integer }
+    CPEProposal:
+      type: object
+      properties:
+        name: { type: string, description: Munki item name }
+        display_name: { type: string }
+        developer: { type: string }
+        bundle_id: { type: string }
+        keyword: { type: string, description: the keywordSearch that produced the proposal }
+        status: { type: string, enum: [proposed, no_match, error] }
+        confidence: { type: string, enum: [high, medium, low, none] }
+        needs_review: { type: boolean }
+        part: { type: string }
+        vendor: { type: string }
+        product: { type: string }
+        evidence: { type: array, items: { type: string } }
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              part: { type: string }
+              vendor: { type: string }
+              product: { type: string }
+              title: { type: string }
+              entries: { type: integer }
+              score: { type: integer }
+              exact: { type: boolean }
+              evidence: { type: array, items: { type: string } }
+        error: { type: string }
+        looked_up_at: { type: string, format: date-time }
+        terraform: { type: string, description: cpe_override blocks to paste into the config repo; empty without a proposal }
     KeelEnrollSecretWrite:
       type: object
       required: [name, secret]

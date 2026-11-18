@@ -111,6 +111,27 @@ func (s *Server) syncVulnerabilities(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// listCPEProposals is read-only. A proposal becomes a mapping only through a
+// cpe_override in the config repo; there is no endpoint that applies one.
+func (s *Server) listCPEProposals(w http.ResponseWriter, r *http.Request) {
+	out, err := s.store.ListCPEProposals(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// refreshCPEProposals runs one paced batch of NVD CPE lookups now.
+func (s *Server) refreshCPEProposals(w http.ResponseWriter, r *http.Request) {
+	out, err := s.store.RefreshCPEProposals(r.Context())
+	if err != nil {
+		s.writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) deviceVulnerabilities(w http.ResponseWriter, r *http.Request) {
 	out, err := s.store.DeviceVulnerabilities(r.Context(), r.PathValue("id"))
 	if err != nil {

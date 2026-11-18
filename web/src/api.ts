@@ -400,6 +400,36 @@ export type VulnerabilityIssue = {
   fix: IssueFix;
 };
 
+export type CPECandidate = {
+  part: string;
+  vendor: string;
+  product: string;
+  title: string;
+  entries: number;
+  score: number;
+  exact: boolean;
+  evidence: string[];
+};
+
+export type CPEProposal = {
+  name: string;
+  display_name: string;
+  developer: string;
+  bundle_id: string;
+  keyword: string;
+  status: "proposed" | "no_match" | "error";
+  confidence: "high" | "medium" | "low" | "none";
+  needs_review: boolean;
+  part: string;
+  vendor: string;
+  product: string;
+  evidence: string[];
+  candidates: CPECandidate[];
+  error: string;
+  looked_up_at: string;
+  terraform: string;
+};
+
 export type VulnerabilitySummary = {
   open: number;
   kev: number;
@@ -546,8 +576,74 @@ export type SessionUser = {
   email: string;
   name: string;
   role: string;
+  roles?: string[];
+  permissions?: string[];
   csrf_token: string;
 };
+
+/** Mirrors the server: "*" is everything; write or update on an area implies read. */
+export function can(user: SessionUser | null | undefined, perm: string) {
+  const have = user?.permissions ?? [];
+  if (have.includes("*") || have.includes(perm)) return true;
+  if (perm.endsWith(":read")) {
+    const area = perm.slice(0, -":read".length);
+    return have.includes(`${area}:write`) || have.includes(`${area}:update`);
+  }
+  return false;
+}
+
+export type ReleaseCVE = {
+  cve: string;
+  cvss: number;
+  severity: string;
+  kev: boolean;
+  epss: number;
+  epss_known: boolean;
+  scored: boolean;
+  source: "ranges" | "release_notes";
+};
+
+export type ReleaseReview = {
+  id: string;
+  package_id: string;
+  name: string;
+  display_name: string;
+  version: string;
+  baseline_version: string;
+  catalog: string;
+  final_catalog: string;
+  software_key: string;
+  priority: "high" | "low";
+  reasons: string[];
+  fixed: ReleaseCVE[];
+  still_open: ReleaseCVE[];
+  exposed_devices: number;
+  status: "pending" | "rushed" | "normal" | "rejected" | "superseded";
+  decided_by?: string;
+  decided_at?: string;
+  decision_note?: string;
+  notes: {
+    status: "pending" | "leased" | "done" | "failed";
+    headline: string;
+    highlights: string[];
+    caveats: string[];
+    exploited: boolean;
+    summary: string;
+    recommendation: "" | "high" | "low";
+    rationale: string;
+    security_fixes: boolean;
+    cves: string[];
+    sources: string[];
+    model?: string;
+    error?: string;
+    attempts: number;
+    at?: string;
+  };
+  created_at: string;
+  evaluated_at: string;
+};
+
+export type ReleaseDecision = "rush" | "normal" | "reject";
 
 export type PublicProvider = { id: string; name: string; issuer: string };
 
@@ -616,6 +712,13 @@ export const api = {
   runners: () => request<{ runners: Runner[] }>("/api/v1/runners"),
   catalogs: () => request<{ catalogs: Catalog[] }>("/api/v1/catalogs"),
   packages: () => request<{ packages: Package[] }>("/api/v1/packages"),
+  releaseReviews: (status = "") =>
+    request<{ reviews: ReleaseReview[] }>(`/api/v1/release-reviews${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  decideRelease: (id: string, decision: ReleaseDecision, note: string) =>
+    request<ReleaseReview>(`/api/v1/release-reviews/${encodeURIComponent(id)}/decide`, {
+      method: "POST",
+      body: JSON.stringify({ decision, note }),
+    }),
   manifests: () => request<{ manifests: Manifest[] }>("/api/v1/manifests"),
   rules: () => request<{ promotion_rules: PromotionRule[] }>("/api/v1/promotion-rules"),
   summary: () => request<FleetSummary>("/api/v1/fleet/summary"),
@@ -655,6 +758,7 @@ export const api = {
     request<LogPage>(`/api/v1/log-views/${id}/tail`, { method: "POST", body: JSON.stringify(body) }),
   contextLog: (id: string, body: { device_id?: string; line_id: string; before: number; after: number }) =>
     request<LogContext>(`/api/v1/log-views/${id}/context`, { method: "POST", body: JSON.stringify(body) }),
+  cpeProposals: () => request<{ proposals: CPEProposal[]; waiting: number }>("/api/v1/cpe-proposals"),
   vulnerabilityIssues: (params: IssueQuery = {}) => {
     const q = new URLSearchParams();
     if (params.kev != null) q.set("kev", String(params.kev));

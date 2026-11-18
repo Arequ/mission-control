@@ -383,33 +383,48 @@ func (s *Store) normalizeBinding(ctx context.Context, in model.RoleBinding) (mod
 	if group == "" || len(group) > 200 || strings.ContainsAny(group, "\r\n\x00") {
 		return model.RoleBinding{}, invalid("group is invalid")
 	}
-	if !sso.ValidRole(in.Role) {
-		return model.RoleBinding{}, invalid("role must be viewer, operator, or admin")
+	in.Role = strings.TrimSpace(in.Role)
+	ok, err := s.roleExists(ctx, in.Role)
+	if err != nil {
+		return model.RoleBinding{}, err
+	}
+	if !ok {
+		return model.RoleBinding{}, invalid("role must be viewer, operator, admin, or a missioncontrol_role name")
 	}
 	in.Group = group
 	return in, nil
 }
 
-// ResolveRole maps snapshotted groups through the provider's current bindings.
-func (s *Store) ResolveRole(ctx context.Context, providerID string, groups []string) (string, bool, error) {
+// ResolveAccess maps snapshotted groups through the provider's current
+// bindings and custom roles. Every matching binding adds its permissions.
+func (s *Store) ResolveAccess(ctx context.Context, providerID string, groups []string) (sso.Access, bool, error) {
 	rows, err := s.pool.Query(ctx, `SELECT idp_group, role FROM sso_role_bindings WHERE provider_id=$1`, providerID)
 	if err != nil {
-		return "", false, err
+		return sso.Access{}, false, err
 	}
 	defer rows.Close()
 	var bindings []sso.Binding
 	for rows.Next() {
 		var b sso.Binding
 		if err := rows.Scan(&b.Group, &b.Role); err != nil {
-			return "", false, err
+			return sso.Access{}, false, err
 		}
 		bindings = append(bindings, b)
 	}
 	if err := rows.Err(); err != nil {
-		return "", false, err
+		return sso.Access{}, false, err
 	}
-	role, ok := sso.MapRole(groups, bindings)
-	return role, ok, nil
+	custom, err := s.customRoles(ctx)
+	if err != nil {
+		return sso.Access{}, false, err
+	}
+	access, ok := sso.ResolveAccess(groups, bindings, custom)
+	return access, ok, nil
+}
+
+// breakGlassAccess is the local sign-in: one built-in role, no bindings.
+func breakGlassAccess(role string) sso.Access {
+	return sso.Access{Roles: []string{role}, Scopes: sso.ScopesForRole(role)}
 }
 
 // LoginState is a one-time OIDC transaction.
@@ -461,6 +476,8 @@ type SessionRecord struct {
 	Email      string
 	Name       string
 	Role       string
+	Roles      []string
+	Scopes     map[string]bool
 	Groups     []string
 	CSRF       string
 	IDToken    string
@@ -484,20 +501,24 @@ func (s *Store) CreateSession(ctx context.Context, rec SessionRecord, absolute, 
 		idle = 30 * time.Minute
 	}
 	now := s.now()
-	role := rec.Role
+	var access sso.Access
 	if rec.ProviderID != "" {
-		resolved, ok, err := s.ResolveRole(ctx, rec.ProviderID, rec.Groups)
+		resolved, ok, err := s.ResolveAccess(ctx, rec.ProviderID, rec.Groups)
 		if err != nil {
 			return "", model.SessionUser{}, err
 		}
 		if !ok {
 			return "", model.SessionUser{}, invalid("no role binding matches this user")
 		}
-		role = resolved
+		access = resolved
+	} else {
+		if !sso.ValidRole(rec.Role) {
+			return "", model.SessionUser{}, invalid("role is invalid")
+		}
+		access = breakGlassAccess(rec.Role)
 	}
-	if !sso.ValidRole(role) {
-		return "", model.SessionUser{}, invalid("role is invalid")
-	}
+	// The column is a display snapshot; access is resolved again on every request.
+	role := strings.Join(access.Roles, ",")
 	if rec.Groups == nil {
 		rec.Groups = []string{}
 	}
@@ -524,7 +545,10 @@ func (s *Store) CreateSession(ctx context.Context, rec SessionRecord, absolute, 
 	if err := tx.Commit(ctx); err != nil {
 		return "", model.SessionUser{}, err
 	}
-	return raw, model.SessionUser{Email: rec.Email, Name: rec.Name, Role: role, CSRFToken: csrf}, nil
+	return raw, model.SessionUser{
+		Email: rec.Email, Name: rec.Name, Role: access.Primary(), Roles: access.Roles,
+		Permissions: access.Permissions(), CSRFToken: csrf,
+	}, nil
 }
 
 // LookupSession loads a session, enforces idle and absolute timeouts, and slides the idle deadline.
@@ -555,25 +579,30 @@ func (s *Store) LookupSession(ctx context.Context, raw string, idle time.Duratio
 		rec.Groups = []string{}
 	}
 	rec.BreakGlass = rec.ProviderID == ""
+	var access sso.Access
 	if rec.BreakGlass {
-		rec.Role = role
+		if !sso.ValidRole(role) {
+			return SessionRecord{}, ErrNotFound
+		}
+		access = breakGlassAccess(role)
 	} else {
-		resolved, ok, err := s.ResolveRole(ctx, rec.ProviderID, rec.Groups)
+		resolved, ok, err := s.ResolveAccess(ctx, rec.ProviderID, rec.Groups)
 		if err != nil {
 			return SessionRecord{}, err
 		}
 		if !ok {
 			return SessionRecord{}, ErrNotFound
 		}
-		rec.Role = resolved
+		access = resolved
 	}
+	rec.Role, rec.Roles, rec.Scopes = access.Primary(), access.Roles, access.Scopes
 	if now.Sub(last) > 30*time.Second {
 		nextIdle := now.Add(idle)
 		if nextIdle.After(expires) {
 			nextIdle = expires
 		}
 		_, _ = s.pool.Exec(ctx, `UPDATE sessions SET last_seen_at=$2, idle_expires_at=$3, role=$4 WHERE id_hash=$1 AND revoked_at IS NULL`,
-			auth.Hash(raw), now, nextIdle, rec.Role)
+			auth.Hash(raw), now, nextIdle, strings.Join(rec.Roles, ","))
 	}
 	return rec, nil
 }

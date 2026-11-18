@@ -57,6 +57,13 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("copy example: %v %s", err, out)
 	}
+	// make demo leaves state next to the example. Copied in, it would plan
+	// against the demo's resources instead of this test's empty database.
+	for _, leftover := range []string{"terraform.tfstate", "terraform.tfstate.backup", ".terraform", ".terraform.lock.hcl"} {
+		if err := os.RemoveAll(filepath.Join(work, leftover)); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	run := func(args ...string) string {
 		t.Helper()
@@ -425,6 +432,22 @@ func TestTerraformProviderCRUD(t *testing.T) {
 	vulnSettings := apiGet(t, ts.URL, "/api/v1/vulnerability-settings")
 	if !strings.Contains(vulnSettings, "com.acme.Browser") || !strings.Contains(vulnSettings, `"has_nvd_api_key":true`) || strings.Contains(vulnSettings, "example-nvd-api-key") {
 		t.Fatalf("vulnerability settings: %s", vulnSettings)
+	}
+
+	// A fresh database behind existing state (make demo after down -v) has
+	// no stored NVD key. The next apply resends the write-only key; the
+	// provider must not promise the stale has_nvd_api_key=false from state.
+	if _, err := st.Pool().Exec(ctx, `UPDATE vulnerability_settings SET nvd_api_key='' WHERE id='default'`); err != nil {
+		t.Fatal(err)
+	}
+	run("apply", "-auto-approve", "-input=false",
+		"-var", "endpoint="+ts.URL,
+		"-var", "token=mc_tf_admin",
+		"-var", "max_concurrency=4",
+		"-var", "soak_days=3",
+	)
+	if got := apiGet(t, ts.URL, "/api/v1/vulnerability-settings"); !strings.Contains(got, `"has_nvd_api_key":true`) {
+		t.Fatalf("key not restored after server lost it: %s", got)
 	}
 
 	if _, err := st.Pool().Exec(ctx, `UPDATE osquery_queries SET sql='SELECT 1' WHERE name='launch_daemons'`); err != nil {

@@ -239,6 +239,8 @@ const autopkgSeg = [
 const munkiSeg = [
   { to: "/munki", label: "Catalogs", on: (p: string) => p === "/munki" },
   { to: "/munki/manifests", label: "Manifests", on: (p: string) => p.startsWith("/munki/manifests") },
+  { to: "/munki/releases", label: "Releases", on: (p: string) => p.startsWith("/munki/releases") },
+  { to: "/munki/nvd-mappings", label: "NVD", on: (p: string) => p.startsWith("/munki/nvd-mappings") },
 ];
 
 export function AutopkgSeg() { return <Segment items={autopkgSeg} />; }

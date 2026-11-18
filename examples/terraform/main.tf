@@ -94,6 +94,46 @@ resource "missioncontrol_role_binding" "engineering" {
   role        = "admin"
 }
 
+# Custom roles: <area>:<read|write|update>. write or update implies read.
+# A user gets the union of every role their IdP groups match.
+resource "missioncontrol_role" "it_engineers" {
+  name        = "it-engineers"
+  description = "IT Engineers: run AutoPkg, watch runners, and decide release reviews."
+  permissions = ["jobs:write", "logs:read", "munki:read", "releases:update", "runners:read", "vuln:read"]
+}
+
+resource "missioncontrol_role" "it_ops" {
+  name        = "it-ops"
+  description = "IT Ops: decide release reviews and see what they fix."
+  permissions = ["munki:read", "releases:update", "vuln:read"]
+}
+
+# Skipping the soak is granted on its own. rush:update moves a build the
+# CVE feeds rate HIGH straight to production; nothing else can.
+resource "missioncontrol_role" "it_release_approvers" {
+  name        = "it-release-approvers"
+  description = "Release approvers: may rush a HIGH priority build to production."
+  permissions = ["releases:update", "rush:update", "vuln:read"]
+}
+
+resource "missioncontrol_role_binding" "it_release_approvers" {
+  provider_id = missioncontrol_sso_provider.dex.id
+  group       = "IT Release Approvers"
+  role        = missioncontrol_role.it_release_approvers.name
+}
+
+resource "missioncontrol_role_binding" "it_engineers" {
+  provider_id = missioncontrol_sso_provider.dex.id
+  group       = "IT Engineers"
+  role        = missioncontrol_role.it_engineers.name
+}
+
+resource "missioncontrol_role_binding" "it_ops" {
+  provider_id = missioncontrol_sso_provider.dex.id
+  group       = "IT Ops"
+  role        = missioncontrol_role.it_ops.name
+}
+
 resource "missioncontrol_role_binding" "everyone" {
   provider_id = missioncontrol_sso_provider.dex.id
   group       = "*"

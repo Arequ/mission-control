@@ -50,10 +50,12 @@ type ProductBound struct {
 // NVDQuery is one page of the CVE API 2.0.
 type NVDQuery struct {
 	Part, Vendor, Product string
-	Start                 int
-	PerPage               int
-	ModStart              time.Time
-	ModEnd                time.Time
+	// CVEID fetches one record by id instead of by product.
+	CVEID    string
+	Start    int
+	PerPage  int
+	ModStart time.Time
+	ModEnd   time.Time
 }
 
 // NVDPage is one response page.
@@ -386,10 +388,23 @@ func (c *NVDClient) now() time.Time {
 
 // Fetch downloads one page, honoring Retry-After on 429 and 403.
 func (c *NVDClient) Fetch(ctx context.Context, q NVDQuery) (NVDPage, error) {
+	var page NVDPage
+	err := c.paced(ctx, func() (int, time.Duration, error) {
+		p, status, retry, err := c.once(ctx, q)
+		page = p
+		return status, retry, err
+	})
+	return page, err
+}
+
+// paced runs one NVD request at the client's pace and retries rate limits.
+// Every NVD endpoint (CVE and CPE) goes through here so a lookup cannot go
+// faster than the published limit.
+func (c *NVDClient) paced(ctx context.Context, call func() (int, time.Duration, error)) error {
 	if !c.last.IsZero() {
 		wait := c.pace() - c.now().Sub(c.last)
 		if err := c.sleep(ctx, wait); err != nil {
-			return NVDPage{}, err
+			return err
 		}
 	}
 	retries := c.Retries
@@ -399,15 +414,15 @@ func (c *NVDClient) Fetch(ctx context.Context, q NVDQuery) (NVDPage, error) {
 	var last error
 	for attempt := 0; attempt < retries; attempt++ {
 		c.last = c.now()
-		page, status, retry, err := c.once(ctx, q)
+		status, retry, err := call()
 		if err == nil && status < 300 {
-			return page, nil
+			return nil
 		}
 		if status != http.StatusTooManyRequests && status != http.StatusForbidden && status != http.StatusServiceUnavailable {
 			if err != nil {
-				return NVDPage{}, err
+				return err
 			}
-			return NVDPage{}, fmt.Errorf("nvd status %d", status)
+			return fmt.Errorf("nvd status %d", status)
 		}
 		if retry <= 0 {
 			retry = time.Duration(1<<attempt) * time.Second
@@ -422,13 +437,13 @@ func (c *NVDClient) Fetch(ctx context.Context, q NVDQuery) (NVDPage, error) {
 			last = fmt.Errorf("nvd status %d", status)
 		}
 		if err := c.sleep(ctx, retry); err != nil {
-			return NVDPage{}, err
+			return err
 		}
 	}
 	if last == nil {
 		last = fmt.Errorf("nvd rate limit")
 	}
-	return NVDPage{}, last
+	return last
 }
 
 func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Duration, error) {
@@ -445,7 +460,14 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 		per = 200
 	}
 	v := url.Values{}
-	v.Set("virtualMatchString", fmt.Sprintf("cpe:2.3:%s:%s:%s:*:*:*:*:*:*:*", q.Part, q.Vendor, q.Product))
+	if q.CVEID != "" {
+		if !ValidCVE(q.CVEID) {
+			return NVDPage{}, 0, 0, fmt.Errorf("invalid cve id")
+		}
+		v.Set("cveId", q.CVEID)
+	} else {
+		v.Set("virtualMatchString", fmt.Sprintf("cpe:2.3:%s:%s:%s:*:*:*:*:*:*:*", q.Part, q.Vendor, q.Product))
+	}
 	v.Set("resultsPerPage", strconv.Itoa(per))
 	v.Set("startIndex", strconv.Itoa(q.Start))
 	if !q.ModStart.IsZero() {
@@ -460,15 +482,26 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 		v.Set("lastModEndDate", end.UTC().Format(nvdTimeLayout))
 	}
 	u.RawQuery = v.Encode()
+	body, status, retry, err := c.get(ctx, u)
+	if err != nil {
+		return NVDPage{}, status, retry, err
+	}
+	page, err := ParseNVD(body)
+	return page, status, 0, err
+}
+
+// get sends one GET to NVD. The URL is checked against the feed rules first
+// and the key travels only in the apiKey header.
+func (c *NVDClient) get(ctx context.Context, u *url.URL) ([]byte, int, time.Duration, error) {
 	if strings.Contains(strings.ToLower(u.RawQuery), "apikey") {
-		return NVDPage{}, 0, 0, fmt.Errorf("refusing to put the api key in the query")
+		return nil, 0, 0, fmt.Errorf("refusing to put the api key in the query")
 	}
 	if err := ValidateFeedURL(u.String()); err != nil {
-		return NVDPage{}, 0, 0, err
+		return nil, 0, 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return NVDPage{}, 0, 0, err
+		return nil, 0, 0, err
 	}
 	if c.Key != "" {
 		req.Header.Set("apiKey", c.Key)
@@ -479,18 +512,21 @@ func (c *NVDClient) once(ctx context.Context, q NVDQuery) (NVDPage, int, time.Du
 	}
 	res, err := hc.Do(req)
 	if err != nil {
-		return NVDPage{}, 0, 0, err
+		return nil, 0, 0, err
 	}
 	defer res.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(res.Body, 8<<20))
 	if err != nil {
-		return NVDPage{}, res.StatusCode, 0, err
+		return nil, res.StatusCode, 0, err
 	}
 	if res.StatusCode >= 300 {
-		return NVDPage{}, res.StatusCode, retryAfter(res, c.now()), fmt.Errorf("nvd status %d", res.StatusCode)
+		if res.StatusCode == http.StatusNotFound && c.Key != "" {
+			// NVD answers an unknown apiKey with 404, not 401 or 403.
+			return nil, res.StatusCode, 0, fmt.Errorf("nvd status 404: NVD rejects an invalid API key with 404; check nvd_api_key")
+		}
+		return nil, res.StatusCode, retryAfter(res, c.now()), fmt.Errorf("nvd status %d", res.StatusCode)
 	}
-	page, err := ParseNVD(body)
-	return page, res.StatusCode, 0, err
+	return body, res.StatusCode, 0, nil
 }
 
 func retryAfter(res *http.Response, now time.Time) time.Duration {

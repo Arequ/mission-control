@@ -1522,3 +1522,136 @@ html.dark .tile { background: rgba(255, 255, 255, 0.035); }
   .tile-foot { flex-direction: column; align-items: stretch; gap: 8px; }
   .tile-foot > a, .tile-foot > .faint { display: flex; justify-content: center; }
 }
+
+/* Release reviews (Munki › Releases). */
+.release-filter { width: 150px; }
+.releases { display: flex; flex-direction: column; gap: 10px; padding: 2px 16px 16px; }
+.release {
+  position: relative;
+  padding: 14px 14px 12px;
+  border-radius: 12px;
+  background: var(--code);
+  box-shadow: inset 0 0 0 1px var(--card-border);
+}
+html.dark .release { background: rgba(255, 255, 255, 0.035); }
+.release.hot { box-shadow: inset 0 0 0 1.5px rgba(255, 59, 48, 0.45); }
+.release-h { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.release-id { min-width: 0; flex: 1; }
+.release-id .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.prio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  flex: none;
+}
+.prio.high { background: #ff3b30; color: #fff; }
+.prio.low { background: var(--gray-bg); color: var(--gray); }
+.release-reasons { margin: 10px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-2); }
+.release-reasons li + li { margin-top: 2px; }
+.cve-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
+.cve-label { font-size: 11px; font-weight: 600; width: 64px; }
+.cve-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--text);
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px var(--card-border);
+  transition: transform 140ms var(--ease);
+}
+.cve-chip:hover { transform: translateY(-1px); }
+.cve-chip.red { background: var(--red-bg); }
+.cve-chip.orange { background: var(--orange-bg); }
+.cve-score { font-weight: 650; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.notes {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--card-border);
+  font-size: 12.5px;
+}
+.notes.waiting { display: flex; align-items: center; gap: 6px; color: var(--text-3); background: transparent; }
+.notes-h { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-weight: 650; color: var(--purple); }
+.notes-meta { margin-left: auto; font-weight: 500; font-size: 11px; }
+.advice { height: 18px; display: inline-flex; align-items: center; padding: 0 7px; border-radius: 6px; font-size: 10.5px; font-weight: 650; white-space: nowrap; }
+.advice.high { background: var(--red-bg); color: var(--red); }
+.advice.low { background: var(--gray-bg); color: var(--gray); }
+.notes-headline { margin-top: 6px; font-size: 13.5px; font-weight: 650; letter-spacing: -0.01em; }
+.notes-points { margin: 6px 0 0; padding-left: 16px; line-height: 1.45; }
+.notes-caveats { margin: 6px 0 0; padding: 0; list-style: none; font-size: 11.5px; color: var(--orange); }
+.notes-caveats li { display: flex; align-items: flex-start; gap: 5px; }
+.notes-caveats svg { flex: none; margin-top: 2px; }
+.notes-why { display: flex; gap: 8px; margin-top: 8px; font-size: 12px; }
+.notes-sources { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 6px; font-size: 11.5px; }
+.notes-why .faint, .notes-sources .faint { width: 48px; flex: none; font-weight: 600; }
+.notes-sources a, .notes-urls a { color: var(--accent-ink); }
+.notes-more { margin-top: 8px; font-size: 12px; color: var(--text-2); }
+.notes-more summary { cursor: pointer; font-weight: 600; color: var(--text-3); width: fit-content; }
+.notes-more p { margin: 6px 0 0; line-height: 1.5; }
+.notes-urls { margin: 6px 0 0; padding-left: 16px; word-break: break-all; }
+.release-decided { margin-top: 10px; }
+.release-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.capsule.primary.rush { background: #ff3b30; }
+.capsule.primary.danger { background: var(--red); }
+.capsule.danger-text { color: var(--red); }
+.release-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--field);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.release-confirm .release-actions { margin-top: 0; }
+.release-perm { padding: 0 4px; font-size: 12px; }
+.rush-note { margin-right: auto; align-self: center; font-size: 11.5px; }
+@media (max-width: 520px) {
+  .release-h { flex-wrap: wrap; }
+  .release-id { flex: 1 1 calc(100% - 46px); }
+  .cve-label { width: 100%; }
+  .release-actions .capsule { flex: 1; }
+}
+
+/* NVD mapping proposals (Munki › NVD). Read-only; the block is pasted into the config repo. */
+.cpe-key { flex: none; font-size: 11.5px; padding: 3px 8px; border-radius: 7px; background: var(--field); box-shadow: inset 0 0 0 1px var(--card-border); }
+.cpe-hcl-wrap { margin-top: 10px; }
+.cpe-hcl {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px var(--card-border);
+  font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  white-space: pre;
+  overflow-x: auto;
+  color: var(--text);
+}
+.cpe-meta { margin-right: auto; font-size: 11px; }
+div.cpe-meta { margin-top: 8px; }
+.cpe-cands { margin-top: 8px; }
+.cpe-cand-rows { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.cpe-cand { display: grid; grid-template-columns: minmax(140px, 220px) 1fr auto; gap: 10px; align-items: baseline; padding: 4px 8px; border-radius: 7px; font-size: 11.5px; }
+.cpe-cand.on { background: var(--field); }
+.cpe-score { font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (max-width: 640px) {
+  .cpe-cand { grid-template-columns: 1fr; gap: 2px; }
+  .release-h .cpe-key { display: none; }
+}
+.cpe-caveat { display: flex; align-items: flex-start; gap: 5px; margin: 0 0 6px; }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Arequ/mission-control/internal/auth"
 	"github.com/Arequ/mission-control/internal/model"
-	"github.com/Arequ/mission-control/internal/sso"
 	"github.com/Arequ/mission-control/internal/store"
 )
 
@@ -59,7 +58,7 @@ func (s *Server) withAPI(scope string, next http.Handler) http.Handler {
 			Kind:   "session",
 			ID:     auth.Hash(raw.Value),
 			Name:   rec.Email,
-			Scopes: sso.ScopesForRole(rec.Role),
+			Scopes: rec.Scopes,
 		}
 		if scope != "" && !p.Allows(scope) {
 			writeJSON(w, http.StatusForbidden, errBody{"forbidden"})
